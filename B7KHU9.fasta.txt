@@ -1,0 +1,2 @@
+>sp|B7KHU9|PETG_GLOC7 Cytochrome b6-f complex subunit 5 OS=Gloeothece citriformis (strain PCC 7424) OX=65393 GN=petG PE=3 SV=1
+MIEPLVLGLVMGLVPITLAGLFVAAYLQYKRGNQLNLD
