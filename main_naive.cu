@@ -108,23 +108,21 @@ __device__ char FindNum_C(const char* origin, const char* target, const char num
 }
 
 /* mutate codon upper adaptation or randmom adaptation */
-__device__ curandStateXORWOW mutation(curandStateXORWOW r_state, const char* codon_info, char* target, char total_num, char origin_pos, const float mprob, const int type)
+__device__ void mutation(curandStateXORWOW *state, const char* codon_info, char* target, char total_num, char origin_pos, const float mprob, const int type)
 {
 	float cd_prob;
 	char new_idx;
-	curandStateXORWOW state;
 
 	/* 1.0 is included and 0.0 is excluded */
-	state = r_state;
-	cd_prob = curand_uniform(&state);
-	new_idx = (char)(curand_uniform(&state) * total_num);
+	cd_prob = curand_uniform(state);
+	new_idx = (char)(curand_uniform(state) * total_num);
 
 	switch (type)
 	{
 	case RANDOM:
 		if (cd_prob <= mprob && total_num > 1) {
 			while (origin_pos == new_idx || new_idx == total_num) {
-				new_idx = (char)(curand_uniform(&state) * total_num);
+				new_idx = (char)(curand_uniform(state) * total_num);
 			}
 			target[0] = codon_info[new_idx * CODON_SIZE];
 			target[1] = codon_info[new_idx * CODON_SIZE + 1];
@@ -135,7 +133,7 @@ __device__ curandStateXORWOW mutation(curandStateXORWOW r_state, const char* cod
 	case UPPER:
 		if (cd_prob <= mprob && (origin_pos != (total_num - 1))) {
 			while (new_idx < origin_pos || new_idx == total_num) {
-				new_idx = (char)(curand_uniform(&state) * total_num);
+				new_idx = (char)(curand_uniform(state) * total_num);
 			}
 			target[0] = codon_info[new_idx * CODON_SIZE];
 			target[1] = codon_info[new_idx * CODON_SIZE + 1];
@@ -144,7 +142,7 @@ __device__ curandStateXORWOW mutation(curandStateXORWOW r_state, const char* cod
 		break;
 	}
 
-	return state;
+	return;
 }
 
 
@@ -408,7 +406,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 					
 					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[idx * CODON_SIZE], 
 						s_codons_num[s_amino_seq_idx[seq_idx]]);
-					localState = mutation(localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[idx * CODON_SIZE],
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[idx * CODON_SIZE],
 						s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 				}
 			}
@@ -421,7 +419,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 				if (seq_idx < len_amino_seq) {
 					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], 
 						&ptr_target_sol[len_cds * ptr_origin_objidx[_mCAI * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
-					localState = mutation(localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], 
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], 
 						&ptr_target_sol[len_cds * ptr_origin_objidx[_mCAI * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, UPPER);
 				}
 			}
@@ -434,12 +432,12 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 				if (seq_idx < len_amino_seq) {
 					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], 
 						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
-					localState = mutation(localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
 						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 					
 					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], 
 						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
-					localState = mutation(localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
 						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 
 				}
@@ -564,7 +562,7 @@ int main()
 {
 	srand(time(NULL));
 
-	char input_file[32] = "B7KHU9.fasta.txt";
+	char input_file[32] = "Q5VZP5.fasta.txt";
 	char* amino_seq;						// store amino sequences from input file
 	char* h_amino_seq_idx;					// notify index of amino abbreviation array corresponding input amino sequences
 	char* h_pop;							// store population (a set of solutions)
@@ -732,18 +730,18 @@ int main()
 
 
 	/* print solution */
-	for (i = 0; i < pop_size; i++)
-	{
-		printf("%d solution\n", i + 1);
-		for (j = 0; j < cds_num; j++) {
-			printf("%d cds : ", j + 1);
-			for (k = 0; k < len_cds; k++) {
-				printf("%c", h_pop[len_sol * i + len_cds * j + k]);
-			}
-			printf("\n");
-		}
-		printf("\n");
-	}
+	//for (i = 0; i < pop_size; i++)
+	//{
+	//	printf("%d solution\n", i + 1);
+	//	for (j = 0; j < cds_num; j++) {
+	//		printf("%d cds : ", j + 1);
+	//		for (k = 0; k < len_cds; k++) {
+	//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
+	//		}
+	//		printf("\n");
+	//	}
+	//	printf("\n");
+	//}
 	
 	/* print objective value */
 	for (i = 0; i < pop_size; i++)
