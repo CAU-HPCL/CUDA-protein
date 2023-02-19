@@ -15,6 +15,7 @@
 #define NOT_FOUND -1
 #define CODON_SIZE 3
 
+#define SECTION_NUM 12
 #define RANDOM 0
 #define UPPER 1
 #define LOWER 2
@@ -146,7 +147,20 @@ __device__ void mutation(curandStateXORWOW* state, const char* codon_info, char*
 			target[2] = codon_info[(origin_pos + 1 + new_idx) * CODON_SIZE + 2];
 		}
 		break;
+
+	case LOWER:
+		new_idx = (char)(curand_uniform(state) * origin_pos);
+		if (cd_prob <= mprob && origin_pos != 0) {
+			while (new_idx == origin_pos) {
+				new_idx = (char)(curand_uniform(state) * origin_pos);
+			}
+			target[0] = codon_info[new_idx * CODON_SIZE];
+			target[1] = codon_info[new_idx * CODON_SIZE + 1];
+			target[2] = codon_info[new_idx * CODON_SIZE + 2];
+		}
+		break;
 	}
+
 
 	return;
 }
@@ -164,7 +178,7 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 }
 
 __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx,
-	const char* d_amino_startpos, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob)
+	const char* d_amino_startpos, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob, const float lowest_mcai)
 {
 	curandStateXORWOW localState;
 	int i, j, k, l;
@@ -185,12 +199,14 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	char lrcs_i, lrcs_j;
 	int lrcs_p, lrcs_q, lrcs_l, tmp_l;
 
+	float section_low, section_high, adjust_prob;
+	char direct;
 
 	id = blockDim.x * blockIdx.x + threadIdx.x;
 	localState = state[id];
 	len_cds = len_amino_seq * CODON_SIZE;
 	len_sol = len_cds * cds_num;
-
+	
 
 	/* -------------------- shared memory allocation -------------------- */
 	extern __shared__ int smem[];
@@ -350,6 +366,106 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		__syncthreads();
 
 	}
+
+
+
+	/* ------------------------------ intentional mutation initail solution for adjusting mCAI ------------------------------ */
+	section_low = lowest_mcai + (1 - lowest_mcai) / SECTION_NUM * (blockIdx.x % SECTION_NUM);
+	if ((blockIdx.x % SECTION_NUM) == (SECTION_NUM - 1))
+		section_high = 1;
+	else
+		section_high = lowest_mcai + (1 - lowest_mcai) / SECTION_NUM * (blockIdx.x % SECTION_NUM + 1);
+
+	/* muatate */
+	adjust_prob = 1.f;
+	// mutate direction
+	if (ptr_origin_objval[_mCAI] < section_low)
+		direct = UPPER;			
+	else if (ptr_origin_objval[_mCAI] > section_high)
+		direct = LOWER;
+	if (blockIdx.x != 0) {
+		while (ptr_origin_objval[_mCAI] < section_low || ptr_origin_objval[_mCAI] > section_high)
+		{
+			if (ptr_origin_objval[_mCAI] < section_low) {
+				if (direct != UPPER) {
+					direct = UPPER;
+					adjust_prob /= 2;
+				}
+				num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
+				for (i = 0; i < num_partition; i++) {
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx < len_amino_seq * cds_num) {
+						seq_idx = idx % len_amino_seq;
+
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
+					}
+				}
+			}
+			else {
+				if (direct != LOWER) {
+					direct = LOWER;
+					adjust_prob /= 2;
+				}
+				num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
+				for (i = 0; i < num_partition; i++) {
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx < len_amino_seq * cds_num) {
+						seq_idx = idx % len_amino_seq;
+
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
+					}
+				}
+			}
+
+			/* calculate mCAI value */
+			num_partition = (len_amino_seq % blockDim.x == 0) ? (len_amino_seq / blockDim.x) : (len_amino_seq / blockDim.x) + 1;
+			for (i = 0; i < cds_num; i++) {
+				s_obj_compute[threadIdx.x] = 1;
+
+				for (j = 0; j < num_partition; j++) {
+					seq_idx = blockDim.x * j + threadIdx.x;
+					if (seq_idx < len_amino_seq) {
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+					}
+				}
+				__syncthreads();
+
+				j = blockDim.x / 2;
+				while (j != 0) {
+					if (threadIdx.x < j) {
+						s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+					}
+					__syncthreads();
+
+					j /= 2;
+				}
+
+				if (threadIdx.x == 0) {
+					if (i == 0) {
+						ptr_origin_objval[_mCAI] = s_obj_compute[0];
+						ptr_origin_objidx[_mCAI * 2] = i;
+					}
+					else if (s_obj_compute[0] <= ptr_origin_objval[_mCAI]) {
+						ptr_origin_objval[_mCAI] = s_obj_compute[0];
+						ptr_origin_objidx[_mCAI * 2] = i;
+					}
+				}
+				__syncthreads();
+
+			}
+		}
+	}
+	/* ------------------------------ end of intational muation ------------------------------ */
+
+
 
 	/* calculate mHD */
 	num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
@@ -635,6 +751,33 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 
 				}
 			}
+			break;
+
+		case 3:
+			i = ptr_target_lrcsval[P] / CODON_SIZE;
+			seq_idx = i + threadIdx.x;
+			while (seq_idx <= (ptr_target_lrcsval[P] + ptr_target_lrcsval[L]) / CODON_SIZE)
+			{
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+				mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+
+				seq_idx += blockDim.x;
+			}
+			
+			i = ptr_target_lrcsval[Q] / CODON_SIZE;
+			seq_idx = i + threadIdx.x;
+			while (seq_idx <= (ptr_target_lrcsval[Q] + ptr_target_lrcsval[L]) / CODON_SIZE)
+			{
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+				mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+
+				seq_idx += blockDim.x;
+			}
+
 			break;
 		}
 		__syncthreads();
@@ -1072,7 +1215,7 @@ int main()
 	mainKernel << <numBlocks, threadsPerBlock,
 		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
 		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
-		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob);
+		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob, lowest_mcai);
 	cudaEventRecord(d_end);
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
