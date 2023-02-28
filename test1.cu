@@ -15,7 +15,8 @@
 #define NOT_FOUND -1
 #define CODON_SIZE 3
 
-#define SECTION_NUM 12
+#define SECTION_NUM 64
+#define LIMIT 128
 #define RANDOM 0
 #define UPPER 1
 #define LOWER 2
@@ -31,7 +32,6 @@
 
 #define FIRST_SOL 1
 #define SECOND_SOL 2
-
 
 
 /* -------------------- 20 kinds of amino acids & weights are sorted ascending order -------------------- */
@@ -78,13 +78,6 @@ float Codons_weight[61] = { 1854 / 13563.0f, 5296 / 13563.0f, 7223 / 135063.0f, 
 1.0f,\
 5768 / 7114.0f, 1.0f };
 /* ------------------------------ end of definition ------------------------------ */
-
-
-__constant__ char c_codons[184];
-__constant__ char c_codons_num[20];
-__constant__ char c_amino_startpos[20];
-__constant__ float c_codons_weight[61];
-__constant__ char* c_amino_seq_idx;
 
 
 /* find index of Amino_abbreviation array matching with input amino abbreviation using binary search */
@@ -185,11 +178,8 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 	return;
 }
 
-
-
-
-
-__global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob, const float lowest_mcai)
+__global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx,
+	const char* d_amino_startpos, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob, const float lowest_mcai)
 {
 	curandStateXORWOW localState;
 	int i, j, k, l;
@@ -212,6 +202,7 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 
 	float section_low, section_high, adjust_prob;
 	char direct;
+	int cnt;
 
 	id = blockDim.x * blockIdx.x + threadIdx.x;
 	localState = state[id];
@@ -221,6 +212,13 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 
 	/* -------------------- shared memory allocation -------------------- */
 	extern __shared__ int smem[];
+	/* read only */
+	__shared__ char* s_amino_seq_idx;
+	__shared__ char* s_amino_startpos;
+	__shared__ char* s_codons;
+	__shared__ char* s_codons_num;
+	__shared__ float* s_codons_weight;
+	/* read & write */
 	__shared__ char* s_sol1;
 	__shared__ char* s_sol2;
 	__shared__ char* s_sol1_objidx;
@@ -236,10 +234,15 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 	s_lrcs_tid = smem;
 	s_sol1_lrcsval = (int*)&s_lrcs_tid[blockDim.x];							// for finding which thread have LRCS
 	s_sol2_lrcsval = (int*)&s_sol1_lrcsval[3];
-	s_obj_compute = (float*)&s_sol2_lrcsval[3];
+	s_codons_weight = (float*)&s_sol2_lrcsval[3];
+	s_obj_compute = (float*)&s_codons_weight[61];
 	s_sol1_objval = (float*)&s_obj_compute[blockDim.x];
 	s_sol2_objval = (float*)&s_sol1_objval[OBJECTIVE_NUM];
-	s_sol1 = (char*)&s_sol2_objval[OBJECTIVE_NUM];
+	s_amino_seq_idx = (char*)&s_sol2_objval[OBJECTIVE_NUM];
+	s_amino_startpos = (char*)&s_amino_seq_idx[len_amino_seq];
+	s_codons = (char*)&s_amino_startpos[20];
+	s_codons_num = (char*)&s_codons[183];
+	s_sol1 = (char*)&s_codons_num[20];
 	s_sol2 = (char*)&s_sol1[len_sol];
 	s_sol1_objidx = (char*)&s_sol2[len_sol];
 	s_sol2_objidx = (char*)&s_sol1_objidx[OBJECTIVE_NUM * 2];
@@ -247,6 +250,35 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 	/* -------------------- end of shared memory allocation -------------------- */
 
 
+
+	/* read only shared memory variable value setting */
+	num_partition = (len_amino_seq % blockDim.x == 0) ? len_amino_seq / blockDim.x : len_amino_seq / blockDim.x + 1;
+	for (i = 0; i < num_partition; i++) {			// sequence index
+		idx = blockDim.x * i + threadIdx.x;
+		if (idx < len_amino_seq)
+			s_amino_seq_idx[idx] = d_amino_seq_idx[idx];
+	}
+
+	num_partition = 183 / blockDim.x + 1;
+	for (i = 0; i < num_partition; i++) {
+		idx = blockDim.x * i + threadIdx.x;
+
+		if (idx < 183) {
+			s_codons[idx] = d_codons[idx];
+		}
+
+		if (idx < 61) {
+			s_codons_weight[idx] = d_codons_weight[idx];
+		}
+
+		if (idx < 20) {
+			s_codons_num[threadIdx.x] = d_codons_num[threadIdx.x];
+			s_amino_startpos[threadIdx.x] = d_amino_startpos[threadIdx.x];
+		}
+
+	}
+	__syncthreads();
+	/* ---------- end of initial value setting ---------- */
 
 
 
@@ -264,14 +296,14 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 			if (idx < len_amino_seq * cds_num) {
 				seq_idx = idx % len_amino_seq;
 
-				pos = c_codons_num[c_amino_seq_idx[seq_idx]] - 1;
+				pos = s_codons_num[s_amino_seq_idx[seq_idx]] - 1;
 
 				j = idx * CODON_SIZE;
-				k = (c_amino_startpos[c_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
+				k = (s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
 
-				ptr_origin_sol[j] = c_codons[k];
-				ptr_origin_sol[j + 1] = c_codons[k + 1];
-				ptr_origin_sol[j + 2] = c_codons[k + 2];
+				ptr_origin_sol[j] = s_codons[k];
+				ptr_origin_sol[j + 1] = s_codons[k + 1];
+				ptr_origin_sol[j + 2] = s_codons[k + 2];
 			}
 		}
 	}
@@ -283,15 +315,15 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 				seq_idx = idx % len_amino_seq;
 
 				do {
-					pos = (char)(curand_uniform(&localState) * c_codons_num[c_amino_seq_idx[seq_idx]]);
-				} while (pos == c_codons_num[c_amino_seq_idx[seq_idx]]);
+					pos = (char)(curand_uniform(&localState) * s_codons_num[s_amino_seq_idx[seq_idx]]);
+				} while (pos == s_codons_num[s_amino_seq_idx[seq_idx]]);
 
 				j = idx * CODON_SIZE;
-				k = (c_amino_startpos[c_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
+				k = (s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
 
-				s_sol1[j] = c_codons[k];
-				s_sol1[j + 1] = c_codons[k + 1];
-				s_sol1[j + 2] = c_codons[k + 2];
+				s_sol1[j] = s_codons[k];
+				s_sol1[j + 1] = s_codons[k + 1];
+				s_sol1[j + 2] = s_codons[k + 2];
 			}
 		}
 	}
@@ -306,9 +338,9 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 		for (j = 0; j < num_partition; j++) {
 			seq_idx = blockDim.x * j + threadIdx.x;
 			if (seq_idx < len_amino_seq) {
-				pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
-					c_codons_num[c_amino_seq_idx[seq_idx]]);
-				s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[c_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
+					s_codons_num[s_amino_seq_idx[seq_idx]]);
+				s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
 			}
 		}
 		__syncthreads();
@@ -348,6 +380,7 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 
 	/* muatate */
 	adjust_prob = 1.f;
+	cnt = 0;
 	// mutate direction
 	if (ptr_origin_objval[_mCAI] < section_low)
 		direct = UPPER;
@@ -367,10 +400,10 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 					if (idx < len_amino_seq * cds_num) {
 						seq_idx = idx % len_amino_seq;
 
-						pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							c_codons_num[c_amino_seq_idx[seq_idx]]);
-						mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							c_codons_num[c_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
 					}
 				}
 			}
@@ -385,10 +418,10 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 					if (idx < len_amino_seq * cds_num) {
 						seq_idx = idx % len_amino_seq;
 
-						pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							c_codons_num[c_amino_seq_idx[seq_idx]]);
-						mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							c_codons_num[c_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
 					}
 				}
 			}
@@ -401,9 +434,9 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 				for (j = 0; j < num_partition; j++) {
 					seq_idx = blockDim.x * j + threadIdx.x;
 					if (seq_idx < len_amino_seq) {
-						pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
-							c_codons_num[c_amino_seq_idx[seq_idx]]);
-						s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[c_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
 					}
 				}
 				__syncthreads();
@@ -431,6 +464,7 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 				__syncthreads();
 
 			}
+			cnt++;
 		}
 	}
 	/* ------------------------------ end of intational muation ------------------------------ */
@@ -683,10 +717,10 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 				if (idx < len_amino_seq * cds_num) {
 					seq_idx = idx % len_amino_seq;
 
-					pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[idx * CODON_SIZE],
-						c_codons_num[c_amino_seq_idx[seq_idx]]);
-					mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[idx * CODON_SIZE],
-						c_codons_num[c_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[idx * CODON_SIZE],
+						s_codons_num[s_amino_seq_idx[seq_idx]]);
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[idx * CODON_SIZE],
+						s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 				}
 			}
 			break;
@@ -696,10 +730,10 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 			for (i = 0; i < num_partition; i++) {
 				seq_idx = blockDim.x * i + threadIdx.x;
 				if (seq_idx < len_amino_seq) {
-					pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-						&ptr_target_sol[len_cds * ptr_origin_objidx[_mCAI * 2] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]]);
-					mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-						&ptr_target_sol[len_cds * ptr_origin_objidx[_mCAI * 2] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]], pos, mprob, UPPER);
+					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+						&ptr_target_sol[len_cds * ptr_origin_objidx[_mCAI * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+						&ptr_target_sol[len_cds * ptr_origin_objidx[_mCAI * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, UPPER);
 				}
 			}
 			break;
@@ -709,15 +743,15 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 			for (i = 0; i < num_partition; i++) {
 				seq_idx = blockDim.x * i + threadIdx.x;
 				if (seq_idx < len_amino_seq) {
-					pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]]);
-					mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 
-					pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2 + 1] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]]);
-					mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2 + 1] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+					mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+						&ptr_target_sol[len_cds * ptr_origin_objidx[_mHD * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 
 				}
 			}
@@ -728,10 +762,10 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 			seq_idx = i + threadIdx.x;
 			while (seq_idx <= (ptr_target_lrcsval[P] + ptr_target_lrcsval[L]) / CODON_SIZE)
 			{
-				pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]]);
-				mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+				mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 
 				seq_idx += blockDim.x;
 			}
@@ -740,10 +774,10 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 			seq_idx = i + threadIdx.x;
 			while (seq_idx <= (ptr_target_lrcsval[Q] + ptr_target_lrcsval[L]) / CODON_SIZE)
 			{
-				pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]]);
-				mutation(&localState, &c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE],
-					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], c_codons_num[c_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+				mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
 
 				seq_idx += blockDim.x;
 			}
@@ -761,9 +795,9 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 			for (j = 0; j < num_partition; j++) {
 				seq_idx = blockDim.x * j + threadIdx.x;
 				if (seq_idx < len_amino_seq) {
-					pos = FindNum_C(&c_codons[c_amino_startpos[c_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[len_cds * i + seq_idx * CODON_SIZE],
-						c_codons_num[c_amino_seq_idx[seq_idx]]);
-					s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[c_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[len_cds * i + seq_idx * CODON_SIZE],
+						s_codons_num[s_amino_seq_idx[seq_idx]]);
+					s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
 				}
 			}
 			__syncthreads();
@@ -1024,13 +1058,33 @@ __global__ void mainKernel(curandStateXORWOW* state, char* d_pop, float* d_objva
 	return;
 }
 
+#define IDEAL_MCAI 1
+#define IDEAL_MHD 0.4f
+#define IDEAL_MLRCS 0
+#define EUCLID(val1, val2, val3) (float)sqrt(pow(IDEAL_MCAI - val1, 2) + pow(IDEAL_MHD - val2, 2) + pow(val3, 2))
+/* Minimum distance to optimal objective value(point) */
+float MinEuclid(const float* objval, int pop_size)
+{
+	float res;
+	float tmp;
+
+	res = 100;
+	for (int i = 0; i < pop_size; i++) {
+		tmp = EUCLID(i * OBJECTIVE_NUM + _mCAI, i * OBJECTIVE_NUM + _mHD, i * OBJECTIVE_NUM + _MLRCS);
+		if (tmp < res)
+			res = tmp;
+	}
+
+	return res;
+}
+
 
 
 int main()
 {
 	srand(time(NULL));
 
-	char input_file[32] = "B3LS90.fasta.txt";
+	char input_file[32] = "Q5VZP5.fasta.txt";
 	char* amino_seq;						// store amino sequences from input file
 	char* h_amino_seq_idx;					// notify index of amino abbreviation array corresponding input amino sequences
 	char* h_pop;							// store population (a set of solutions)
@@ -1044,6 +1098,7 @@ int main()
 	int x;
 
 	float lowest_mcai;						// for divide initial solution section
+	float min_dist;
 
 	char tmp;
 	int i, j, k;
@@ -1055,8 +1110,13 @@ int main()
 	int numBlocks;
 	int threadsPerBlock;
 
+	char* d_amino_seq_idx;
 	char* d_pop;
 	float* d_objval;
+	char* d_amino_startpos;
+	char* d_codons;
+	char* d_codons_num;
+	float* d_codons_weight;
 	curandStateXORWOW* genState;
 
 	/* for time and mcai section cehck */
@@ -1156,35 +1216,38 @@ int main()
 
 	/* device memory allocation */
 	cudaMalloc((void**)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock);
+	cudaMalloc((void**)&d_codons, sizeof(Codons));
+	cudaMalloc((void**)&d_codons_num, sizeof(Codons_num));
+	cudaMalloc((void**)&d_codons_weight, sizeof(Codons_weight));
+	cudaMalloc((void**)&d_amino_seq_idx, sizeof(char) * len_amino_seq);
+	cudaMalloc((void**)&d_amino_startpos, sizeof(char) * 20);
 	cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol);
 	cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM);
-	
-	// dynamic constant memory
-	cudaMalloc(&c_amino_seq_idx, sizeof(char) * len_amino_seq);
-	cudaMemcpyToSymbol(c_amino_seq_idx, &c_amino_seq_idx, sizeof(char*));
-	cudaMemcpy(c_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice);
 
 
-	/* memory copy host to device constant memory */
-	cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20);
-	cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons));
-	cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num));
-	cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight));
+	/* memory copy host to device */
+	cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_amino_startpos, h_amino_startpos, sizeof(char) * 20, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_codons, Codons, sizeof(Codons), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_codons_num, Codons_num, sizeof(Codons_num), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_codons_weight, Codons_weight, sizeof(Codons_weight), cudaMemcpyHostToDevice);
 
 
 	/* optimize kerenl call */
 	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
 
 	cudaEventRecord(d_start);
-	mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + OBJECTIVE_NUM * 2 * 2 + 1) >> >
-		(genState, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob, lowest_mcai);
+	mainKernel << <numBlocks, threadsPerBlock,
+		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
+		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
+		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob, lowest_mcai);
 	cudaEventRecord(d_end);
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
 
 
-	printf("using shared memory size : %d\n", sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + 
-		sizeof(char) * (len_sol * 2 + OBJECTIVE_NUM * 2 * 2 + 1));
+	printf("using shared memory size : %d\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
+		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1));
 	printf("\nGPU kerenl cycle time : %f second\n", kernel_time / 1000.f);
 	printf("lowest mcai value : %f\n", lowest_mcai);
 
@@ -1194,6 +1257,9 @@ int main()
 	cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM, cudaMemcpyDeviceToHost);
 
 
+	// print minimum distance to ideal point
+	min_dist = MinEuclid(h_obj, pop_size);
+	printf("minimum distance to the ideal point : %f\n", min_dist);
 
 	/* print solution */
 	//for (i = 0; i < pop_size; i++)
@@ -1209,6 +1275,7 @@ int main()
 	//	printf("\n");
 	//}
 
+
 	/* print objective value */
 	for (i = 0; i < pop_size; i++)
 	{
@@ -1218,53 +1285,26 @@ int main()
 
 
 	/* for computing hypervolume write file */
-	//fopen_s(&fp, "test.txt", "w");
-	//for (i = 0; i < pop_size; i++)
-	//{
-	//	fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD] / 0.35, h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-	//}
-	//fclose(fp);
+	fopen_s(&fp, "test.txt", "w");
+	for (i = 0; i < pop_size; i++)
+	{
+		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD] / 0.4, h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+	}
+	fclose(fp);
 
 
-
-
-
-	/* check mCAI vlaue section count chekck */
-	//int check_cnt[10];
-	//float check_low, check_high;
-	//memset(check_cnt, 0, sizeof(int) * 10);
-	//for (i = 0; i < pop_size; i++) {
-	//	check_low = 0;
-	//	check_high = 0.1f;
-	//	j = 0;
-	//	while (true) {
-	//		if (check_low < h_check_mcai[i] && h_check_mcai[i] <= check_high) {
-	//			check_cnt[j] += 1;
-	//			break;
-	//		}
-	//		else {
-	//			check_low += 0.1f;
-	//			check_high += 0.1f;
-	//			j++;
-	//		}
-	//	}
-	//}
-	//check_low = 0;
-	//check_high = 0.1f;
-	//for (i = 0; i < 10; i++) {
-	//	printf("mCAI %f <   <= %f    counting : %d\n", check_low, check_high, check_cnt[i]);
-	//	check_low += 0.1f;
-	//	check_high += 0.1f;
-	//}
-	/* end of check */
 
 
 
 	/* free deivce memory */
 	cudaFree(genState);
+	cudaFree(d_codons);
+	cudaFree(d_codons_num);
+	cudaFree(d_codons_weight);
+	cudaFree(d_amino_seq_idx);
+	cudaFree(d_amino_startpos);
 	cudaFree(d_pop);
 	cudaFree(d_objval);
-	cudaFree(c_amino_seq_idx);
 	cudaEventDestroy(d_start);
 	cudaEventDestroy(d_end);
 

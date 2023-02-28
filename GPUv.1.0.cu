@@ -1,4 +1,4 @@
-﻿/* include C/C++ header */
+/* include C/C++ header */
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -9,12 +9,17 @@
 #include <device_launch_parameters.h>
 #include <curand_kernel.h>
 
+
 #define WARP_SIZE 32
 
 #define NOT_FOUND -1
 #define CODON_SIZE 3
+
+#define SECTION_NUM 64
+#define LIMIT 128
 #define RANDOM 0
 #define UPPER 1
+#define LOWER 2
 
 #define OBJECTIVE_NUM 3
 #define _mCAI 0
@@ -110,7 +115,7 @@ __device__ char FindNum_C(const char* origin, const char* target, const char num
 }
 
 /* mutate codon upper adaptation or randmom adaptation */
-__device__ void mutation(curandStateXORWOW *state, const char* codon_info, char* target, char total_num, char origin_pos, const float mprob, const int type)
+__device__ void mutation(curandStateXORWOW* state, const char* codon_info, char* target, char total_num, char origin_pos, const float mprob, const int type)
 {
 	float cd_prob;
 	char new_idx;
@@ -143,7 +148,20 @@ __device__ void mutation(curandStateXORWOW *state, const char* codon_info, char*
 			target[2] = codon_info[(origin_pos + 1 + new_idx) * CODON_SIZE + 2];
 		}
 		break;
+
+	case LOWER:
+		new_idx = (char)(curand_uniform(state) * origin_pos);
+		if (cd_prob <= mprob && origin_pos != 0) {
+			while (new_idx == origin_pos) {
+				new_idx = (char)(curand_uniform(state) * origin_pos);
+			}
+			target[0] = codon_info[new_idx * CODON_SIZE];
+			target[1] = codon_info[new_idx * CODON_SIZE + 1];
+			target[2] = codon_info[new_idx * CODON_SIZE + 2];
+		}
+		break;
 	}
+
 
 	return;
 }
@@ -160,26 +178,33 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 	return;
 }
 
-__global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx, 
-	const char * d_amino_startpos, char* d_pop, float * d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob)
+__global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx,
+	const char* d_amino_startpos, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob, const float lowest_mcai)
 {
-	int idx, seq_idx;
-	char pos;
-
+	curandStateXORWOW localState;
 	int i, j, k, l;
+	int idx, seq_idx;
 	int num_partition;
 	int id;
+	char pos;
+
 	int len_cds, len_sol;
-	float tmp_objval;
-	curandStateXORWOW localState;
+	char sol_num;
 
-	char* ptr_origin_sol, *ptr_target_sol;
-	float* ptr_origin_objval, *ptr_target_objval;
-	char* ptr_origin_objidx, *ptr_target_objidx;
+	char* ptr_origin_sol, * ptr_target_sol;
+	float* ptr_origin_objval, * ptr_target_objval;
+	char* ptr_origin_objidx, * ptr_target_objidx;
 	int* ptr_origin_lrcsval, * ptr_target_lrcsval;
-	char sol_num;									
 
-	id = threadIdx.x + blockIdx.x * blockDim.x;
+	// for computing MLRCS
+	char lrcs_i, lrcs_j;
+	int lrcs_p, lrcs_q, lrcs_l, tmp_l;
+
+	float section_low, section_high, adjust_prob;
+	char direct;
+	int cnt;
+
+	id = blockDim.x * blockIdx.x + threadIdx.x;
 	localState = state[id];
 	len_cds = len_amino_seq * CODON_SIZE;
 	len_sol = len_cds * cds_num;
@@ -188,26 +213,26 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	/* -------------------- shared memory allocation -------------------- */
 	extern __shared__ int smem[];
 	/* read only */
-	__shared__ char* s_amino_seq_idx;				
-	__shared__ char* s_amino_startpos;				
-	__shared__ char* s_codons;						
-	__shared__ char* s_codons_num;					
-	__shared__ float* s_codons_weight;				
+	__shared__ char* s_amino_seq_idx;
+	__shared__ char* s_amino_startpos;
+	__shared__ char* s_codons;
+	__shared__ char* s_codons_num;
+	__shared__ float* s_codons_weight;
 	/* read & write */
-	__shared__ char* s_sol1;							
-	__shared__ char* s_sol2;							
+	__shared__ char* s_sol1;
+	__shared__ char* s_sol2;
 	__shared__ char* s_sol1_objidx;
 	__shared__ char* s_sol2_objidx;
 	__shared__ char* mutation_type;
-	__shared__ float* s_obj_compute;					// for computing mCAI & mHD value
+	__shared__ float* s_obj_compute;										// for computing mCAI & mHD value
 	__shared__ float* s_sol1_objval;
 	__shared__ float* s_sol2_objval;
-	__shared__ int* s_lrcs_compute;
 	__shared__ int* s_sol1_lrcsval;
 	__shared__ int* s_sol2_lrcsval;
+	__shared__ int* s_lrcs_tid;
 
-	s_lrcs_compute = smem;
-	s_sol1_lrcsval = (int*)&s_lrcs_compute[(len_cds + 1) * 2];
+	s_lrcs_tid = smem;
+	s_sol1_lrcsval = (int*)&s_lrcs_tid[blockDim.x];							// for finding which thread have LRCS
 	s_sol2_lrcsval = (int*)&s_sol1_lrcsval[3];
 	s_codons_weight = (float*)&s_sol2_lrcsval[3];
 	s_obj_compute = (float*)&s_codons_weight[61];
@@ -228,7 +253,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 
 	/* read only shared memory variable value setting */
 	num_partition = (len_amino_seq % blockDim.x == 0) ? len_amino_seq / blockDim.x : len_amino_seq / blockDim.x + 1;
-	for (i = 0; i < num_partition; i++) {
+	for (i = 0; i < num_partition; i++) {			// sequence index
 		idx = blockDim.x * i + threadIdx.x;
 		if (idx < len_amino_seq)
 			s_amino_seq_idx[idx] = d_amino_seq_idx[idx];
@@ -237,21 +262,24 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	num_partition = 183 / blockDim.x + 1;
 	for (i = 0; i < num_partition; i++) {
 		idx = blockDim.x * i + threadIdx.x;
-		if (idx < 183)
-			s_codons[idx] = d_codons[idx];
-	}
 
-	num_partition = 61 / blockDim.x + 1;
-	for (i = 0; i < num_partition; i++) {
-		idx = blockDim.x * i + threadIdx.x;
-		if (idx < 61) 
+		if (idx < 183) {
+			s_codons[idx] = d_codons[idx];
+		}
+
+		if (idx < 61) {
 			s_codons_weight[idx] = d_codons_weight[idx];
-	}
-	if (threadIdx.x < 20) {
-		s_codons_num[threadIdx.x] = d_codons_num[threadIdx.x];
-		s_amino_startpos[threadIdx.x] = d_amino_startpos[threadIdx.x];
+		}
+
+		if (idx < 20) {
+			s_codons_num[threadIdx.x] = d_codons_num[threadIdx.x];
+			s_amino_startpos[threadIdx.x] = d_amino_startpos[threadIdx.x];
+		}
+
 	}
 	__syncthreads();
+	/* ---------- end of initial value setting ---------- */
+
 
 
 	/* -------------------- initialize solution -------------------- */
@@ -259,8 +287,8 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	ptr_origin_objval = s_sol1_objval;
 	ptr_origin_objidx = s_sol1_objidx;
 	ptr_origin_lrcsval = s_sol1_lrcsval;
-	
-	if(blockIdx.x == 0)
+
+	if (blockIdx.x == 0)
 	{
 		num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
 		for (i = 0; i < num_partition; i++) {
@@ -270,9 +298,12 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 
 				pos = s_codons_num[s_amino_seq_idx[seq_idx]] - 1;
 
-				ptr_origin_sol[idx * CODON_SIZE] = s_codons[(s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE];
-				ptr_origin_sol[idx * CODON_SIZE + 1] = s_codons[(s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE + 1];
-				ptr_origin_sol[idx * CODON_SIZE + 2] = s_codons[(s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE + 2];
+				j = idx * CODON_SIZE;
+				k = (s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
+
+				ptr_origin_sol[j] = s_codons[k];
+				ptr_origin_sol[j + 1] = s_codons[k + 1];
+				ptr_origin_sol[j + 2] = s_codons[k + 2];
 			}
 		}
 	}
@@ -287,9 +318,12 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 					pos = (char)(curand_uniform(&localState) * s_codons_num[s_amino_seq_idx[seq_idx]]);
 				} while (pos == s_codons_num[s_amino_seq_idx[seq_idx]]);
 
-				ptr_origin_sol[idx * CODON_SIZE] = s_codons[(s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE];
-				ptr_origin_sol[idx * CODON_SIZE + 1] = s_codons[(s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE + 1];
-				ptr_origin_sol[idx * CODON_SIZE + 2] = s_codons[(s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE + 2];
+				j = idx * CODON_SIZE;
+				k = (s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
+
+				s_sol1[j] = s_codons[k];
+				s_sol1[j + 1] = s_codons[k + 1];
+				s_sol1[j + 2] = s_codons[k + 2];
 			}
 		}
 	}
@@ -300,128 +334,332 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	num_partition = (len_amino_seq % blockDim.x == 0) ? (len_amino_seq / blockDim.x) : (len_amino_seq / blockDim.x) + 1;
 	for (i = 0; i < cds_num; i++) {
 		s_obj_compute[threadIdx.x] = 1;
+
 		for (j = 0; j < num_partition; j++) {
 			seq_idx = blockDim.x * j + threadIdx.x;
 			if (seq_idx < len_amino_seq) {
-				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE], 
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
 					s_codons_num[s_amino_seq_idx[seq_idx]]);
-				s_obj_compute[threadIdx.x] *= pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+				s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
 			}
 		}
 		__syncthreads();
-	
+
+		j = blockDim.x / 2;
+		while (j != 0) {
+			if (threadIdx.x < j) {
+				s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+			}
+			__syncthreads();
+
+			j /= 2;
+		}
+
 		if (threadIdx.x == 0) {
-			tmp_objval = 1;
-			for (j = 0; j < blockDim.x; j++) {
-				tmp_objval *= s_obj_compute[j];
+			if (i == 0) {
+				ptr_origin_objval[_mCAI] = s_obj_compute[0];
+				ptr_origin_objidx[_mCAI * 2] = i;
+			}
+			else if (s_obj_compute[0] <= ptr_origin_objval[_mCAI]) {
+				ptr_origin_objval[_mCAI] = s_obj_compute[0];
+				ptr_origin_objidx[_mCAI * 2] = i;
+			}
+		}
+		__syncthreads();
+
+	}
+
+
+
+	/* ------------------------------ intentional mutation initail solution for adjusting mCAI ------------------------------ */
+	section_low = lowest_mcai + (1 - lowest_mcai) / SECTION_NUM * (blockIdx.x % SECTION_NUM);
+	if ((blockIdx.x % SECTION_NUM) == (SECTION_NUM - 1))
+		section_high = 1;
+	else
+		section_high = lowest_mcai + (1 - lowest_mcai) / SECTION_NUM * (blockIdx.x % SECTION_NUM + 1);
+
+	/* muatate */
+	adjust_prob = 1.f;
+	cnt = 0;
+	// mutate direction
+	if (ptr_origin_objval[_mCAI] < section_low)
+		direct = UPPER;
+	else if (ptr_origin_objval[_mCAI] > section_high)
+		direct = LOWER;
+	if (blockIdx.x != 0) {
+		while (ptr_origin_objval[_mCAI] < section_low || ptr_origin_objval[_mCAI] > section_high)
+		{
+			if (ptr_origin_objval[_mCAI] < section_low) {
+				if (direct != UPPER) {
+					direct = UPPER;
+					adjust_prob /= 2;
+				}
+				num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
+				for (i = 0; i < num_partition; i++) {
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx < len_amino_seq * cds_num) {
+						seq_idx = idx % len_amino_seq;
+
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
+					}
+				}
+			}
+			else {
+				if (direct != LOWER) {
+					direct = LOWER;
+					adjust_prob /= 2;
+				}
+				num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
+				for (i = 0; i < num_partition; i++) {
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx < len_amino_seq * cds_num) {
+						seq_idx = idx % len_amino_seq;
+
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
+					}
+				}
 			}
 
-			if (i == 0) {
-				ptr_origin_objval[_mCAI] = tmp_objval;
-				ptr_origin_objidx[_mCAI * 2] = i;
-			}else if (tmp_objval <= ptr_origin_objval[_mCAI]) {
-				ptr_origin_objval[_mCAI] = tmp_objval;
-				ptr_origin_objidx[_mCAI * 2] = i;
+			/* calculate mCAI value */
+			num_partition = (len_amino_seq % blockDim.x == 0) ? (len_amino_seq / blockDim.x) : (len_amino_seq / blockDim.x) + 1;
+			for (i = 0; i < cds_num; i++) {
+				s_obj_compute[threadIdx.x] = 1;
+
+				for (j = 0; j < num_partition; j++) {
+					seq_idx = blockDim.x * j + threadIdx.x;
+					if (seq_idx < len_amino_seq) {
+						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
+							s_codons_num[s_amino_seq_idx[seq_idx]]);
+						s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+					}
+				}
+				__syncthreads();
+
+				j = blockDim.x / 2;
+				while (j != 0) {
+					if (threadIdx.x < j) {
+						s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+					}
+					__syncthreads();
+
+					j /= 2;
+				}
+
+				if (threadIdx.x == 0) {
+					if (i == 0) {
+						ptr_origin_objval[_mCAI] = s_obj_compute[0];
+						ptr_origin_objidx[_mCAI * 2] = i;
+					}
+					else if (s_obj_compute[0] <= ptr_origin_objval[_mCAI]) {
+						ptr_origin_objval[_mCAI] = s_obj_compute[0];
+						ptr_origin_objidx[_mCAI * 2] = i;
+					}
+				}
+				__syncthreads();
+
 			}
+			cnt++;
 		}
-		__syncthreads();
 	}
+	/* ------------------------------ end of intational muation ------------------------------ */
+
+
 
 	/* calculate mHD */
 	num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
 	for (i = 0; i < cds_num; i++) {
 		for (j = i + 1; j < cds_num; j++) {
 			s_obj_compute[threadIdx.x] = 0;
+
 			for (k = 0; k < num_partition; k++) {
 				seq_idx = blockDim.x * k + threadIdx.x;
+
 				if (seq_idx < len_cds && (ptr_origin_sol[len_cds * i + seq_idx] != ptr_origin_sol[len_cds * j + seq_idx])) {
 					s_obj_compute[threadIdx.x] += 1;
 				}
 			}
 			__syncthreads();
-	
-			if (threadIdx.x == 0) {
-				tmp_objval = 0;
-				for (k = 0; k < blockDim.x; k++) {
-					tmp_objval += s_obj_compute[k];
+
+			k = blockDim.x / 2;
+			while (k != 0) {
+				if (threadIdx.x < k) {
+					s_obj_compute[threadIdx.x] += s_obj_compute[threadIdx.x + k];
 				}
-	
+				__syncthreads();
+
+				k /= 2;
+			}
+
+			if (threadIdx.x == 0) {
 				if (i == 0 && j == 1) {
-					ptr_origin_objval[_mHD] = tmp_objval / len_cds;
+					ptr_origin_objval[_mHD] = s_obj_compute[0] / len_cds;
 					ptr_origin_objidx[_mHD * 2] = i;
 					ptr_origin_objidx[_mHD * 2 + 1] = j;
 				}
-				else if (tmp_objval <= ptr_origin_objval[_mHD]) {
-					ptr_origin_objval[_mHD] = tmp_objval;
+				else if ((s_obj_compute[0] / len_cds) <= ptr_origin_objval[_mHD]) {
+					ptr_origin_objval[_mHD] = s_obj_compute[0] / len_cds;
 					ptr_origin_objidx[_mHD * 2] = i;
 					ptr_origin_objidx[_mHD * 2 + 1] = j;
 				}
 			}
 			__syncthreads();
+
 		}
 	}
 
 	/* calculate MLRCS */
-	//if (threadIdx.x == 0) {
-	//	ptr_origin_lrcsval[L] = 0;
-	//}
-	//__syncthreads();
-	//
-	//num_partition = ((len_cds + 1) % blockDim.x == 0) ? (len_cds + 1) / blockDim.x : (len_cds + 1) / blockDim.x + 1;
-	//for (i = 0; i < cds_num; i++) {
-	//	for (j = i; j < cds_num; j++) {
-	//		for (k = 0; k < len_cds + 1; k++) {
-	//			pos = (char)(k % 2);					// distinguish s_lrcs_compute number
-	//			
-	//			if (i == j) {
-	//				for (l = 0; l < num_partition; l++) {
-	//					idx = blockDim.x * l + threadIdx.x;
-	//					
-	//					if (idx < len_cds + 1) {
-	//						if (k == 0 || idx == 0 || (k == idx))
-	//							s_lrcs_compute[pos * (len_cds + 1) + idx] = 0;
-	//						else if (ptr_origin_sol[len_cds * i + k - 1] == ptr_origin_sol[len_cds * j + idx - 1])
-	//							s_lrcs_compute[pos * (len_cds + 1) + idx] = s_lrcs_compute[((pos + 1) % 2) * (len_cds + 1) + idx - 1] + 1;
-	//						else
-	//							s_lrcs_compute[pos * (len_cds + 1) + idx] = 0;
-	//					}
-	//				
-	//				}
-	//			}
-	//			else {
-	//				for (l = 0; l < num_partition; l++) {
-	//					idx = blockDim.x * l + threadIdx.x;
-	//					
-	//					if (idx < len_cds + 1) {
-	//						if (k == 0 || idx == 0)
-	//							s_lrcs_compute[pos * (len_cds + 1) + idx] = 0;
-	//						else if (ptr_origin_sol[len_cds * i + k - 1] == ptr_origin_sol[len_cds * j + idx - 1])
-	//							s_lrcs_compute[pos * (len_cds + 1) + idx] = s_lrcs_compute[((pos + 1) % 2) * (len_cds + 1) + idx - 1] + 1;
-	//						else
-	//							s_lrcs_compute[pos * (len_cds + 1) + idx] = 0;
-	//					}
-	//				
-	//				}
-	//			}
-	//			__syncthreads();
-	//
-	//			if (threadIdx.x == 0) {
-	//				for (l = 1; l < len_cds + 1; l++) {
-	//					if (s_lrcs_compute[pos * (len_cds + 1) + l] >= ptr_origin_lrcsval[L]) {
-	//						ptr_origin_lrcsval[L] = s_lrcs_compute[pos * (len_cds + 1) + l];
-	//						ptr_origin_lrcsval[P] = l - ptr_origin_lrcsval[L] + 1;
-	//						ptr_origin_lrcsval[Q] = k - ptr_origin_lrcsval[L] + 1;
-	//						ptr_origin_objval[_MLRCS] = (float)ptr_origin_lrcsval[L] / len_cds;
-	//						ptr_origin_objidx[_MLRCS * 2] = i;
-	//						ptr_origin_objidx[_MLRCS * 2 + 1] = j;
-	//					}
-	//				}
-	//			}
-	//			__syncthreads();
-	//		}
-	//	}
-	//}
+	s_obj_compute[threadIdx.x] = NOT_FOUND;
+	lrcs_l = 0;
+	for (i = 0; i < cds_num; i++) {
+		for (j = i; j < cds_num; j++) {
+			idx = threadIdx.x;
+
+			if (i == j)
+			{
+				while (idx < 2 * len_cds + 1)
+				{
+					if (idx < len_cds + 1) {
+						l = idx + 1;
+						seq_idx = len_cds - l;
+
+						for (k = 0; k < l; k++) {
+							if (k == 0 || (seq_idx == -1))
+								tmp_l = 0;
+							else if (ptr_origin_sol[len_cds * i + seq_idx + k] == ptr_origin_sol[len_cds * j + k - 1]) {
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = seq_idx + k + 1 - lrcs_l;
+									lrcs_q = k - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+					}
+					else {
+						l = 2 * len_cds + 1 - idx;
+						seq_idx = len_cds - l;
+
+						for (k = 0; k < l; k++) {
+							if (k == 0)
+								tmp_l = 0;
+							else if (ptr_origin_sol[len_cds * i + k - 1] == ptr_origin_sol[len_cds * j + seq_idx + k])
+							{
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = k - lrcs_l;
+									lrcs_q = seq_idx + k + 1 - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+
+					}
+
+					idx += blockDim.x;
+				}
+			}
+			else
+			{
+				while (idx < 2 * len_cds + 1)
+				{
+					if (idx < len_cds + 1) {
+						l = idx + 1;
+						seq_idx = len_cds - l;
+						for (k = 0; k < l; k++) {
+							if (k == 0)
+								tmp_l = 0;
+							else if (ptr_origin_sol[len_cds * i + seq_idx + k] == ptr_origin_sol[len_cds * j + k - 1]) {
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = seq_idx + k + 1 - lrcs_l;
+									lrcs_q = k - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+					}
+					else {
+						l = 2 * len_cds + 1 - idx;
+						seq_idx = len_cds - l;
+
+						for (k = 0; k < l; k++) {
+							if (k == 0)
+								tmp_l = 0;
+							else if (ptr_origin_sol[len_cds * i + k - 1] == ptr_origin_sol[len_cds * j + seq_idx + k])
+							{
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = k - lrcs_l;
+									lrcs_q = seq_idx + k + 1 - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+
+					}
+
+					idx += blockDim.x;
+				}
+			}
+
+		}
+	}
+	__syncthreads();
+
+	j = blockDim.x / 2;
+	s_lrcs_tid[threadIdx.x] = threadIdx.x;
+	__syncthreads();
+	while (j != 0)
+	{
+		if (threadIdx.x < j && (s_obj_compute[threadIdx.x + j] > s_obj_compute[threadIdx.x]))
+		{
+			s_obj_compute[threadIdx.x] = s_obj_compute[threadIdx.x + j];
+			s_lrcs_tid[threadIdx.x] = s_lrcs_tid[threadIdx.x + j];
+		}
+		__syncthreads();
+
+		j /= 2;
+	}
+
+	if (threadIdx.x == s_lrcs_tid[0])
+	{
+		ptr_origin_lrcsval[L] = lrcs_l;
+		ptr_origin_lrcsval[P] = lrcs_p;
+		ptr_origin_lrcsval[Q] = lrcs_q;
+
+		ptr_origin_objval[_MLRCS] = (float)lrcs_l / len_cds;
+		ptr_origin_objidx[_MLRCS * 2] = lrcs_i;
+		ptr_origin_objidx[_MLRCS * 2 + 1] = lrcs_j;
+	}
+	__syncthreads();
 	/* -------------------- end of initialize -------------------- */
+
 
 
 	sol_num = FIRST_SOL;
@@ -518,6 +756,33 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 				}
 			}
 			break;
+
+		case 3:
+			i = ptr_target_lrcsval[P] / CODON_SIZE;
+			seq_idx = i + threadIdx.x;
+			while (seq_idx <= (ptr_target_lrcsval[P] + ptr_target_lrcsval[L]) / CODON_SIZE)
+			{
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+				mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+
+				seq_idx += blockDim.x;
+			}
+
+			i = ptr_target_lrcsval[Q] / CODON_SIZE;
+			seq_idx = i + threadIdx.x;
+			while (seq_idx <= (ptr_target_lrcsval[Q] + ptr_target_lrcsval[L]) / CODON_SIZE)
+			{
+				pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]]);
+				mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
+					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2 + 1] + seq_idx * CODON_SIZE], s_codons_num[s_amino_seq_idx[seq_idx]], pos, mprob, RANDOM);
+
+				seq_idx += blockDim.x;
+			}
+
+			break;
 		}
 		__syncthreads();
 
@@ -526,94 +791,252 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		num_partition = (len_amino_seq % blockDim.x == 0) ? (len_amino_seq / blockDim.x) : (len_amino_seq / blockDim.x) + 1;
 		for (i = 0; i < cds_num; i++) {
 			s_obj_compute[threadIdx.x] = 1;
+
 			for (j = 0; j < num_partition; j++) {
 				seq_idx = blockDim.x * j + threadIdx.x;
 				if (seq_idx < len_amino_seq) {
 					pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_target_sol[len_cds * i + seq_idx * CODON_SIZE],
 						s_codons_num[s_amino_seq_idx[seq_idx]]);
-					s_obj_compute[threadIdx.x] *= pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+					s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
 				}
 			}
 			__syncthreads();
+
+			j = blockDim.x / 2;
+			while (j != 0) {
+				if (threadIdx.x < j) {
+					s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+				}
+				__syncthreads();
+
+				j /= 2;
+			}
 
 			if (threadIdx.x == 0) {
-				tmp_objval = 1;
-				for (j = 0; j < blockDim.x; j++) {
-					tmp_objval *= s_obj_compute[j];
-				}
-
 				if (i == 0) {
-					ptr_target_objval[_mCAI] = tmp_objval;
+					ptr_target_objval[_mCAI] = s_obj_compute[0];
 					ptr_target_objidx[_mCAI * 2] = i;
 				}
-				else if (tmp_objval <= ptr_target_objval[_mCAI]) {
-					ptr_target_objval[_mCAI] = tmp_objval;
+				else if (s_obj_compute[0] <= ptr_target_objval[_mCAI]) {
+					ptr_target_objval[_mCAI] = s_obj_compute[0];
 					ptr_target_objidx[_mCAI * 2] = i;
 				}
 			}
 			__syncthreads();
+
 		}
-	
-	
+
 		/* calculate mHD */
 		num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
 		for (i = 0; i < cds_num; i++) {
 			for (j = i + 1; j < cds_num; j++) {
 				s_obj_compute[threadIdx.x] = 0;
+
 				for (k = 0; k < num_partition; k++) {
 					seq_idx = blockDim.x * k + threadIdx.x;
+
 					if (seq_idx < len_cds && (ptr_target_sol[len_cds * i + seq_idx] != ptr_target_sol[len_cds * j + seq_idx])) {
 						s_obj_compute[threadIdx.x] += 1;
 					}
 				}
 				__syncthreads();
 
-				if (threadIdx.x == 0) {
-					tmp_objval = 0;
-					for (k = 0; k < blockDim.x; k++) {
-						tmp_objval += s_obj_compute[k];
+				k = blockDim.x / 2;
+				while (k != 0) {
+					if (threadIdx.x < k) {
+						s_obj_compute[threadIdx.x] += s_obj_compute[threadIdx.x + k];
 					}
+					__syncthreads();
 
+					k /= 2;
+				}
+
+				if (threadIdx.x == 0) {
 					if (i == 0 && j == 1) {
-						ptr_target_objval[_mHD] = tmp_objval / len_cds;
+						ptr_target_objval[_mHD] = s_obj_compute[0] / len_cds;
 						ptr_target_objidx[_mHD * 2] = i;
 						ptr_target_objidx[_mHD * 2 + 1] = j;
 					}
-					else if (tmp_objval <= ptr_target_objval[_mHD]) {
-						ptr_target_objval[_mHD] = tmp_objval;
+					else if (s_obj_compute[0] / len_cds <= ptr_target_objval[_mHD]) {
+						ptr_target_objval[_mHD] = s_obj_compute[0] / len_cds;
 						ptr_target_objidx[_mHD * 2] = i;
 						ptr_target_objidx[_mHD * 2 + 1] = j;
 					}
 				}
 				__syncthreads();
+
 			}
 		}
-	
-	
+
+		/* calculate MLRCS */
+		s_obj_compute[threadIdx.x] = NOT_FOUND;
+		lrcs_l = 0;
+		for (i = 0; i < cds_num; i++) {
+			for (j = i; j < cds_num; j++) {
+				idx = threadIdx.x;
+
+				if (i == j)
+				{
+					while (idx < 2 * len_cds + 1)
+					{
+						if (idx < len_cds + 1) {
+							l = idx + 1;
+							seq_idx = len_cds - l;
+
+							for (k = 0; k < l; k++) {
+								if (k == 0 || (seq_idx == -1))
+									tmp_l = 0;
+								else if (ptr_target_sol[len_cds * i + seq_idx + k] == ptr_target_sol[len_cds * j + k - 1]) {
+									tmp_l++;
+									if (tmp_l >= lrcs_l) {
+										lrcs_l = tmp_l;
+										s_obj_compute[threadIdx.x] = lrcs_l;
+										lrcs_p = seq_idx + k + 1 - lrcs_l;
+										lrcs_q = k - lrcs_l;
+										lrcs_i = (char)i;
+										lrcs_j = (char)j;
+									}
+								}
+								else
+									tmp_l = 0;
+							}
+						}
+						else {
+							l = 2 * len_cds + 1 - idx;
+							seq_idx = len_cds - l;
+
+							for (k = 0; k < l; k++) {
+								if (k == 0)
+									tmp_l = 0;
+								else if (ptr_target_sol[len_cds * i + k - 1] == ptr_target_sol[len_cds * j + seq_idx + k])
+								{
+									tmp_l++;
+									if (tmp_l >= lrcs_l) {
+										lrcs_l = tmp_l;
+										s_obj_compute[threadIdx.x] = lrcs_l;
+										lrcs_p = k - lrcs_l;
+										lrcs_q = seq_idx + k + 1 - lrcs_l;
+										lrcs_i = (char)i;
+										lrcs_j = (char)j;
+									}
+								}
+								else
+									tmp_l = 0;
+							}
+
+						}
+
+						idx += blockDim.x;
+					}
+				}
+				else
+				{
+					while (idx < 2 * len_cds + 1)
+					{
+						if (idx < len_cds + 1) {
+							l = idx + 1;
+							seq_idx = len_cds - l;
+							for (k = 0; k < l; k++) {
+								if (k == 0)
+									tmp_l = 0;
+								else if (ptr_target_sol[len_cds * i + seq_idx + k] == ptr_target_sol[len_cds * j + k - 1]) {
+									tmp_l++;
+									if (tmp_l >= lrcs_l) {
+										lrcs_l = tmp_l;
+										s_obj_compute[threadIdx.x] = lrcs_l;
+										lrcs_p = seq_idx + k + 1 - lrcs_l;
+										lrcs_q = k - lrcs_l;
+										lrcs_i = (char)i;
+										lrcs_j = (char)j;
+									}
+								}
+								else
+									tmp_l = 0;
+							}
+						}
+						else {
+							l = 2 * len_cds + 1 - idx;
+							seq_idx = len_cds - l;
+
+							for (k = 0; k < l; k++) {
+								if (k == 0)
+									tmp_l = 0;
+								else if (ptr_target_sol[len_cds * i + k - 1] == ptr_target_sol[len_cds * j + seq_idx + k])
+								{
+									tmp_l++;
+									if (tmp_l >= lrcs_l) {
+										lrcs_l = tmp_l;
+										s_obj_compute[threadIdx.x] = lrcs_l;
+										lrcs_p = k - lrcs_l;
+										lrcs_q = seq_idx + k + 1 - lrcs_l;
+										lrcs_i = (char)i;
+										lrcs_j = (char)j;
+									}
+								}
+								else
+									tmp_l = 0;
+							}
+
+						}
+
+						idx += blockDim.x;
+					}
+				}
+
+			}
+		}
+		__syncthreads();
+
+		j = blockDim.x / 2;
+		s_lrcs_tid[threadIdx.x] = threadIdx.x;
+		__syncthreads();
+		while (j != 0)
+		{
+			if (threadIdx.x < j && s_obj_compute[threadIdx.x + j] > s_obj_compute[threadIdx.x])
+			{
+				s_obj_compute[threadIdx.x] = s_obj_compute[threadIdx.x + j];
+				s_lrcs_tid[threadIdx.x] = s_lrcs_tid[threadIdx.x + j];
+			}
+			__syncthreads();
+
+			j /= 2;
+		}
+
+		if (threadIdx.x == s_lrcs_tid[0])
+		{
+			ptr_target_lrcsval[L] = lrcs_l;
+			ptr_target_lrcsval[P] = lrcs_p;
+			ptr_target_lrcsval[Q] = lrcs_q;
+
+			ptr_target_objval[_MLRCS] = (float)lrcs_l / len_cds;
+			ptr_target_objidx[_MLRCS * 2] = lrcs_i;
+			ptr_target_objidx[_MLRCS * 2 + 1] = lrcs_j;
+		}
+		__syncthreads();
+
+
 		if (ptr_target_objval[_mCAI] >= ptr_origin_objval[_mCAI] &&
-			ptr_target_objval[_mHD] >= ptr_origin_objval[_mHD]) {
-			if (sol_num == FIRST_SOL) {
+			ptr_target_objval[_mHD] >= ptr_origin_objval[_mHD] &&
+			ptr_target_objval[_MLRCS] <= ptr_origin_objval[_MLRCS])
+		{
+			if (sol_num == FIRST_SOL)
 				sol_num = SECOND_SOL;
-			}
-			else {
+			else
 				sol_num = FIRST_SOL;
-			}
 		}
+
 	}
 
 
 	if (sol_num == FIRST_SOL) {
 		ptr_origin_sol = s_sol1;
 		ptr_origin_objval = s_sol1_objval;
-		ptr_origin_objidx = s_sol1_objidx;
-		ptr_origin_lrcsval = s_sol1_lrcsval;
 	}
 	else {
 		ptr_origin_sol = s_sol2;
 		ptr_origin_objval = s_sol2_objval;
-		ptr_origin_objidx = s_sol2_objidx;
-		ptr_origin_lrcsval = s_sol2_lrcsval;
 	}
+
 
 	/* copy from shared memory to global memory */
 	num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
@@ -630,7 +1053,29 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] = ptr_origin_objval[_MLRCS];
 	}
 
+
+
 	return;
+}
+
+#define IDEAL_MCAI 1
+#define IDEAL_MHD 0.4f
+#define IDEAL_MLRCS 0
+#define EUCLID(val1, val2, val3) (float)sqrt(pow(IDEAL_MCAI - val1, 2) + pow(IDEAL_MHD - val2, 2) + pow(val3, 2))
+/* Minimum distance to optimal objective value(point) */
+float MinEuclid(const float* objval, int pop_size)
+{
+	float res;
+	float tmp;
+
+	res = 100;
+	for (int i = 0; i < pop_size; i++) {
+		tmp = EUCLID(objval[i * OBJECTIVE_NUM + _mCAI], objval[i * OBJECTIVE_NUM + _mHD], objval[i * OBJECTIVE_NUM + _MLRCS]);
+		if (tmp < res)
+			res = tmp;
+	}
+
+	return res;
 }
 
 
@@ -651,15 +1096,16 @@ int main()
 	int cds_num;							// size of solution equal to number of CDSs(codon sequences) in a solution
 	float mprob;							// mutation probability
 	int x;
-	
+
 	float lowest_mcai;						// for divide initial solution section
-	
+	float min_dist;
+
 	char tmp;
 	int i, j, k;
 	int idx;
 	char buf[256];
 	FILE* fp;
-	
+
 
 	int numBlocks;
 	int threadsPerBlock;
@@ -780,7 +1226,6 @@ int main()
 
 
 	/* memory copy host to device */
-	//cudaMemcpy(d_pop, h_pop, sizeof(char) * numBlocks * len_sol, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_amino_startpos, h_amino_startpos, sizeof(char) * 20, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_codons, Codons, sizeof(Codons), cudaMemcpyHostToDevice);
@@ -790,18 +1235,21 @@ int main()
 
 	/* optimize kerenl call */
 	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
-	int size_smem;
-	size_smem = sizeof(float) * (61 + threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(int) * (3 * 2) +
-		sizeof(char) * (len_amino_seq + 20 + 183 + 20 + len_sol * 2 + OBJECTIVE_NUM * 2 * 2 + 1);
-	printf("shared memory size : %d\n", size_smem);
+
 	cudaEventRecord(d_start);
 	mainKernel << <numBlocks, threadsPerBlock,
-		sizeof(float)* (61 + threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(int) * ((len_cds + 1) * 2 + 3 * 2) +
-		sizeof(char) * (len_amino_seq + 20 + 183 + 20 + len_sol * 2 + OBJECTIVE_NUM * 2 * 2 + 1)>> >
-		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob);
+		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
+		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
+		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob, lowest_mcai);
 	cudaEventRecord(d_end);
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
+
+
+	printf("using shared memory size : %d\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
+		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1));
+	printf("\nGPU kerenl cycle time : %f second\n", kernel_time / 1000.f);
+	printf("lowest mcai value : %f\n", lowest_mcai);
 
 
 	/* memory copy device to host */
@@ -809,6 +1257,9 @@ int main()
 	cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM, cudaMemcpyDeviceToHost);
 
 
+	// print minimum distance to ideal point
+	min_dist = MinEuclid(h_objval, pop_size);
+	printf("minimum distance to the ideal point : %f\n", min_dist);
 
 	/* print solution */
 	//for (i = 0; i < pop_size; i++)
@@ -823,7 +1274,8 @@ int main()
 	//	}
 	//	printf("\n");
 	//}
-	
+
+
 	/* print objective value */
 	for (i = 0; i < pop_size; i++)
 	{
@@ -833,47 +1285,14 @@ int main()
 
 
 	/* for computing hypervolume write file */
-	//fopen_s(&fp, "test.txt", "w");
-	//for (i = 0; i < pop_size; i++)
-	//{
-	//	fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD] / 0.35, h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-	//}
-	//fclose(fp);
+	fopen_s(&fp, "test.txt", "w");
+	for (i = 0; i < pop_size; i++)
+	{
+		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD] / 0.4, h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+	}
+	fclose(fp);
 
 
-
-	printf("\nGPU kerenl cycle time : %f second\n",  kernel_time/ 1000.f);
-	printf("lowest mcai value : %f\n", lowest_mcai);
-
-
-	///* check mCAI vlaue section count chekck */
-	//int check_cnt[10];
-	//float check_low, check_high;
-	//memset(check_cnt, 0, sizeof(int) * 10);
-	//for (i = 0; i < pop_size; i++) {
-	//	check_low = 0;
-	//	check_high = 0.1f;
-	//	j = 0;
-	//	while (true) {
-	//		if (check_low < h_check_mcai[i] && h_check_mcai[i] <= check_high) {
-	//			check_cnt[j] += 1;
-	//			break;
-	//		}
-	//		else {
-	//			check_low += 0.1f;
-	//			check_high += 0.1f;
-	//			j++;
-	//		}
-	//	}
-	//}
-	//check_low = 0;
-	//check_high = 0.1f;
-	//for (i = 0; i < 10; i++) {
-	//	printf("mCAI %f <   <= %f    counting : %d\n", check_low, check_high, check_cnt[i]);
-	//	check_low += 0.1f;
-	//	check_high += 0.1f;
-	//}
-	///* end of check */
 
 
 
@@ -886,7 +1305,6 @@ int main()
 	cudaFree(d_amino_startpos);
 	cudaFree(d_pop);
 	cudaFree(d_objval);
-
 	cudaEventDestroy(d_start);
 	cudaEventDestroy(d_end);
 
