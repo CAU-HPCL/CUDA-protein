@@ -10,13 +10,14 @@
 #include <curand_kernel.h>
 
 
+#define _CRT_SECURE_NO_WARINGS
+
+
 #define WARP_SIZE 32
 
 #define NOT_FOUND -1
 #define CODON_SIZE 3
 
-#define SECTION_NUM 64
-#define LIMIT 128
 #define RANDOM 0
 #define UPPER 1
 #define LOWER 2
@@ -112,6 +113,8 @@ __device__ char FindNum_C(const char* origin, const char* target, const char num
 			return i;
 		}
 	}
+
+	return NOT_FOUND;
 }
 
 /* mutate codon upper adaptation or randmom adaptation */
@@ -179,7 +182,7 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 }
 
 __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx,
-	const char* d_amino_startpos, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob, const float lowest_mcai)
+	const char* d_amino_startpos, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob, const float lowest_mcai, const int limit)
 {
 	curandStateXORWOW localState;
 	int i, j, k, l;
@@ -194,7 +197,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	char* ptr_origin_sol, * ptr_target_sol;
 	float* ptr_origin_objval, * ptr_target_objval;
 	char* ptr_origin_objidx, * ptr_target_objidx;
-	int* ptr_origin_lrcsval, * ptr_target_lrcsval;
+	int* ptr_origin_lrcsval, * ptr_target_lrcsval;					// P, Q, L
 
 	// for computing MLRCS
 	char lrcs_i, lrcs_j;
@@ -288,7 +291,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	ptr_origin_objidx = s_sol1_objidx;
 	ptr_origin_lrcsval = s_sol1_lrcsval;
 
-	if (blockIdx.x == 0)
+	if (blockIdx.x == gridDim.x - 1)
 	{
 		num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
 		for (i = 0; i < num_partition; i++) {
@@ -372,11 +375,11 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 
 
 	/* ------------------------------ intentional mutation initail solution for adjusting mCAI ------------------------------ */
-	section_low = lowest_mcai + (1 - lowest_mcai) / SECTION_NUM * (blockIdx.x % SECTION_NUM);
-	if ((blockIdx.x % SECTION_NUM) == (SECTION_NUM - 1))
+	section_low = lowest_mcai + (1 - lowest_mcai) / (gridDim.x - 1) * (blockIdx.x % (gridDim.x - 1));
+	if (blockIdx.x == (gridDim.x - 2))
 		section_high = 1;
 	else
-		section_high = lowest_mcai + (1 - lowest_mcai) / SECTION_NUM * (blockIdx.x % SECTION_NUM + 1);
+		section_high = lowest_mcai + (1 - lowest_mcai) / (gridDim.x - 1) * (blockIdx.x % (gridDim.x - 1) + 1);
 
 	/* muatate */
 	adjust_prob = 1.f;
@@ -386,8 +389,8 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		direct = UPPER;
 	else if (ptr_origin_objval[_mCAI] > section_high)
 		direct = LOWER;
-	if (blockIdx.x != 0) {
-		while (ptr_origin_objval[_mCAI] < section_low || ptr_origin_objval[_mCAI] > section_high)
+	if (blockIdx.x != gridDim.x - 1) {
+		while (cnt < limit && (ptr_origin_objval[_mCAI] < section_low || ptr_origin_objval[_mCAI] > section_high))
 		{
 			if (ptr_origin_objval[_mCAI] < section_low) {
 				if (direct != UPPER) {
@@ -701,8 +704,8 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		/* select mutatation type */
 		if (threadIdx.x == 0) {
 			do {
-				*mutation_type = (char)(curand_uniform(&localState) * 3);
-			} while (*mutation_type == 3);
+				*mutation_type = (char)(curand_uniform(&localState) * 4);
+			} while (*mutation_type == 4);
 		}
 		__syncthreads();
 
@@ -1070,7 +1073,7 @@ float MinEuclid(const float* objval, int pop_size)
 
 	res = 100;
 	for (int i = 0; i < pop_size; i++) {
-		tmp = EUCLID(i * OBJECTIVE_NUM + _mCAI, i * OBJECTIVE_NUM + _mHD, i * OBJECTIVE_NUM + _MLRCS);
+		tmp = EUCLID(objval[i * OBJECTIVE_NUM + _mCAI], objval[i * OBJECTIVE_NUM + _mHD], objval[i * OBJECTIVE_NUM + _MLRCS]);
 		if (tmp < res)
 			res = tmp;
 	}
@@ -1082,9 +1085,9 @@ float MinEuclid(const float* objval, int pop_size)
 
 int main()
 {
-	srand(time(NULL));
+	srand((unsigned int)time(NULL));
 
-	char input_file[32] = "Q5VZP5.fasta.txt";
+	char input_file[32];
 	char* amino_seq;						// store amino sequences from input file
 	char* h_amino_seq_idx;					// notify index of amino abbreviation array corresponding input amino sequences
 	char* h_pop;							// store population (a set of solutions)
@@ -1096,9 +1099,9 @@ int main()
 	int cds_num;							// size of solution equal to number of CDSs(codon sequences) in a solution
 	float mprob;							// mutation probability
 	int x;
-
 	float lowest_mcai;						// for divide initial solution section
 	float min_dist;
+	int limit;
 
 	char tmp;
 	int i, j, k;
@@ -1129,32 +1132,33 @@ int main()
 
 	/* ---------------------------------------- preprocessing ---------------------------------------- */
 	/* input parameter values */
-	//printf("input file name : "); scanf_s("%s", &input_file);
-	printf("input number of cycle : "); scanf_s("%d", &cycle);					// if number of cycle is zero we can check initial population
+	printf("input file name : "); scanf("%s", input_file);
+	printf("input number of cycle : "); scanf("%d", &cycle);					// if number of cycle is zero we can check initial population
 	if (cycle < 0) {
 		printf("input max cycle value >= 0\n");
 		return EXIT_FAILURE;
 	}
-	printf("input number of solution : "); scanf_s("%d", &pop_size);
+	printf("input number of solution : "); scanf("%d", &pop_size);
 	if (pop_size <= 0) {
 		printf("input number of solution > 0\n");
 		return EXIT_FAILURE;
 	}
-	printf("input number of CDSs in a solution : "); scanf_s("%d", &cds_num);
+	printf("input number of CDSs in a solution : "); scanf("%d", &cds_num);
 	if (cds_num <= 1) {
 		printf("input number of CDSs > 1\n");
 		return EXIT_FAILURE;
 	}
-	printf("input mutation probability (0 ~ 1 value) : "); scanf_s("%f", &mprob);
+	printf("input mutation probability (0 ~ 1 value) : "); scanf("%f", &mprob);
 	if (mprob < 0 || mprob > 1) {
 		printf("input mutation probability (0 ~ 1 value) : \n");
 		return EXIT_FAILURE;
 	}
-	printf("input thread per block x value --> number of thread  warp size (32) * x : "); scanf_s("%d", &x);
+	printf("input number of limit : "); scanf("%d", &limit);
+	printf("input thread per block x value --> number of thread  warp size (32) * x : "); scanf("%d", &x);
 
 
 	/* read input file (fasta format) */
-	fopen_s(&fp, input_file, "r");
+	fp = fopen(input_file, "r");
 	if (fp == NULL) {
 		printf("Line : %d Opening input file is failed", __LINE__);
 		return EXIT_FAILURE;
@@ -1201,7 +1205,7 @@ int main()
 	/* caculate the smallest mCAI value */
 	lowest_mcai = 1.f;
 	for (i = 0; i < len_amino_seq; i++) {
-		lowest_mcai *= pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
+		lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
 	}
 	/* ---------------------------------------- end of preprocessing ---------------------------------------- */
 
@@ -1236,11 +1240,12 @@ int main()
 	/* optimize kerenl call */
 	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
 
+
 	cudaEventRecord(d_start);
 	mainKernel << <numBlocks, threadsPerBlock,
 		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
 		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
-		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob, lowest_mcai);
+		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob, lowest_mcai, limit);
 	cudaEventRecord(d_end);
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
@@ -1258,7 +1263,7 @@ int main()
 
 
 	// print minimum distance to ideal point
-	min_dist = MinEuclid(h_obj, pop_size);
+	min_dist = MinEuclid(h_objval, pop_size);
 	printf("minimum distance to the ideal point : %f\n", min_dist);
 
 	/* print solution */
@@ -1284,14 +1289,13 @@ int main()
 	}
 
 
+	fp = fopen("test.txt", "w");
 	/* for computing hypervolume write file */
-	fopen_s(&fp, "test.txt", "w");
 	for (i = 0; i < pop_size; i++)
 	{
 		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD] / 0.4, h_objval[i * OBJECTIVE_NUM + _MLRCS]);
 	}
 	fclose(fp);
-
 
 
 
