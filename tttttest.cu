@@ -190,7 +190,7 @@ __device__ int sorting_idx;
 
 
 __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx, const char* d_amino_startpos,
-	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, float* d_objidx, int* d_lrcsval, 
+	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, int* d_objidx, int* d_lrcsval, 
 	int *d_sorted_array, bool *d_check_read, bool *d_check_write)
 {
 	grid_group g = this_grid();
@@ -958,7 +958,9 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		}
 		g.sync();
 		// --------------------------------------------------------------------------------------------------------------
-
+		if (blockIdx.x == 0 && threadIdx.x == 0)
+			sorting_idx = 0;
+		
 		num_partition = (gridDim.x * 2 % blockDim.x == 0) ? (gridDim.x * 2 / blockDim.x) : (gridDim.x * 2 / blockDim.x) + 1;
 		while (d_check_read[blockIdx.x] || d_check_read[gridDim.x + blockIdx.x]) {
 			if (d_check_read[blockIdx.x]) {
@@ -1131,6 +1133,10 @@ int main()
 	char* d_codons;
 	char* d_codons_num;
 	float* d_codons_weight;
+	int* d_objidx;
+	int* d_lrcsval;
+	int* d_sorted_array;
+	bool* d_check_read, * d_check_write;
 	curandStateXORWOW* genState;
 
 	/* for time and mcai section cehck */
@@ -1236,8 +1242,13 @@ int main()
 	cudaMalloc((void**)&d_codons_weight, sizeof(Codons_weight));
 	cudaMalloc((void**)&d_amino_seq_idx, sizeof(char) * len_amino_seq);
 	cudaMalloc((void**)&d_amino_startpos, sizeof(char) * 20);
-	cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol);
-	cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM);
+	cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol * 2);
+	cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2);
+	cudaMalloc((void**)&d_objidx, sizeof(int) * numBlocks * OBJECTIVE_NUM * 2 * 2);
+	cudaMalloc((void**)&d_lrcsval, sizeof(int) * numBlocks * 3 * 2);
+	cudaMalloc((void**)&d_sorted_array, sizeof(int) * numBlocks * 2);
+	cudaMalloc((void**)&d_check_read, sizeof(bool) * numBlocks * 2);
+	cudaMalloc((void**)&d_check_write, sizeof(bool) * numBlocks * 2);
 
 
 	/* memory copy host to device */
@@ -1255,7 +1266,8 @@ int main()
 	mainKernel << <numBlocks, threadsPerBlock,
 		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
 		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
-		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, d_pop, d_objval, len_amino_seq, cds_num, cycle, mprob, limit, lowest_mcai);
+		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, len_amino_seq, cds_num, cycle, mprob
+			, d_pop, d_objidx, d_objval, d_lrcsval, d_sorted_array, d_check_read, d_check_write);
 	cudaEventRecord(d_end);
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
@@ -1319,6 +1331,11 @@ int main()
 	cudaFree(d_amino_startpos);
 	cudaFree(d_pop);
 	cudaFree(d_objval);
+	cudaFree(d_objidx);
+	cudaFree(d_lrcsval);
+	cudaFree(d_sorted_array);
+	cudaFree(d_check_read);
+	cudaFree(d_check_write);
 	cudaEventDestroy(d_start);
 	cudaEventDestroy(d_end);
 
