@@ -9,6 +9,7 @@
 #include <device_launch_parameters.h>
 #include <curand_kernel.h>
 #include <cooperative_groups.h>
+#include <cuda.h>
 
 using namespace cooperative_groups;
 
@@ -183,9 +184,17 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 	return;
 }
 
-__global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx,
-	const char* d_amino_startpos, char* d_pop, float* d_objval, const int len_amino_seq, const int cds_num, const int cycle, const float mprob, const int limit, const float lowest_mcai)
+
+__device__ int lock = 0;
+__device__ int sorting_idx;
+
+
+__global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx, const char* d_amino_startpos,
+	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, float* d_objidx, int* d_lrcsval, 
+	int *d_sorted_array, bool *d_check_read, bool *d_check_write)
 {
+	grid_group g = this_grid();
+	
 	curandStateXORWOW localState;
 	int i, j, k, l;
 	int idx, seq_idx;
@@ -194,7 +203,6 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	char pos;
 
 	int len_cds, len_sol;
-	char sol_num;
 
 	char* ptr_origin_sol, * ptr_target_sol;
 	float* ptr_origin_objval, * ptr_target_objval;
@@ -292,6 +300,10 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	ptr_origin_objval = s_sol1_objval;
 	ptr_origin_objidx = s_sol1_objidx;
 	ptr_origin_lrcsval = s_sol1_lrcsval;
+	ptr_target_sol = s_sol2;
+	ptr_target_objval = s_sol2_objval;
+	ptr_target_objidx = s_sol2_objidx;
+	ptr_target_lrcsval = s_sol2_lrcsval;
 
 	if (blockIdx.x == gridDim.x - 1)
 	{
@@ -373,104 +385,6 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		__syncthreads();
 
 	}
-
-
-
-	/* ------------------------------ intentional mutation initail solution for adjusting mCAI ------------------------------ */
-	section_low = lowest_mcai + (1 - lowest_mcai) / gridDim.x * (blockIdx.x % gridDim.x);
-	section_high = lowest_mcai + (1 - lowest_mcai) / gridDim.x * (blockIdx.x % gridDim.x + 1);
-
-	/* muatate */
-	adjust_prob = 1.f;
-	cnt = 0;
-	// mutate direction
-	if (ptr_origin_objval[_mCAI] < section_low)
-		direct = UPPER;
-	else if (ptr_origin_objval[_mCAI] > section_high)
-		direct = LOWER;
-	if (blockIdx.x != gridDim.x - 1) {
-		while (cnt < limit && (ptr_origin_objval[_mCAI] < section_low || ptr_origin_objval[_mCAI] > section_high))
-		{
-			if (ptr_origin_objval[_mCAI] < section_low) {
-				if (direct != UPPER) {
-					direct = UPPER;
-					adjust_prob /= 2;
-				}
-				num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
-				for (i = 0; i < num_partition; i++) {
-					idx = blockDim.x * i + threadIdx.x;
-					if (idx < len_amino_seq * cds_num) {
-						seq_idx = idx % len_amino_seq;
-
-						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							s_codons_num[s_amino_seq_idx[seq_idx]]);
-						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
-					}
-				}
-			}
-			else {
-				if (direct != LOWER) {
-					direct = LOWER;
-					adjust_prob /= 2;
-				}
-				num_partition = ((len_amino_seq * cds_num) % blockDim.x == 0) ? (len_amino_seq * cds_num) / blockDim.x : (len_amino_seq * cds_num) / blockDim.x + 1;
-				for (i = 0; i < num_partition; i++) {
-					idx = blockDim.x * i + threadIdx.x;
-					if (idx < len_amino_seq * cds_num) {
-						seq_idx = idx % len_amino_seq;
-
-						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							s_codons_num[s_amino_seq_idx[seq_idx]]);
-						mutation(&localState, &s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[idx * CODON_SIZE],
-							s_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
-					}
-				}
-			}
-
-			/* calculate mCAI value */
-			num_partition = (len_amino_seq % blockDim.x == 0) ? (len_amino_seq / blockDim.x) : (len_amino_seq / blockDim.x) + 1;
-			for (i = 0; i < cds_num; i++) {
-				s_obj_compute[threadIdx.x] = 1;
-
-				for (j = 0; j < num_partition; j++) {
-					seq_idx = blockDim.x * j + threadIdx.x;
-					if (seq_idx < len_amino_seq) {
-						pos = FindNum_C(&s_codons[s_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &ptr_origin_sol[len_cds * i + seq_idx * CODON_SIZE],
-							s_codons_num[s_amino_seq_idx[seq_idx]]);
-						s_obj_compute[threadIdx.x] *= (float)pow(s_codons_weight[s_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
-					}
-				}
-				__syncthreads();
-
-				j = blockDim.x / 2;
-				while (j != 0) {
-					if (threadIdx.x < j) {
-						s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
-					}
-					__syncthreads();
-
-					j /= 2;
-				}
-
-				if (threadIdx.x == 0) {
-					if (i == 0) {
-						ptr_origin_objval[_mCAI] = s_obj_compute[0];
-						ptr_origin_objidx[_mCAI * 2] = i;
-					}
-					else if (s_obj_compute[0] <= ptr_origin_objval[_mCAI]) {
-						ptr_origin_objval[_mCAI] = s_obj_compute[0];
-						ptr_origin_objidx[_mCAI * 2] = i;
-					}
-				}
-				__syncthreads();
-
-			}
-			cnt++;
-		}
-	}
-	/* ------------------------------ end of intational muation ------------------------------ */
-
 
 
 	/* calculate mHD */
@@ -664,30 +578,10 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 
 
 
-	sol_num = FIRST_SOL;
+
 	/* mutate cycle times */
 	for (int c = 0; c < cycle; c++)
 	{
-		if (sol_num == FIRST_SOL) {
-			ptr_origin_sol = s_sol1;
-			ptr_origin_objval = s_sol1_objval;
-			ptr_origin_objidx = s_sol1_objidx;
-			ptr_origin_lrcsval = s_sol1_lrcsval;
-			ptr_target_sol = s_sol2;
-			ptr_target_objval = s_sol2_objval;
-			ptr_target_objidx = s_sol2_objidx;
-			ptr_target_lrcsval = s_sol2_lrcsval;
-		}
-		else {
-			ptr_origin_sol = s_sol2;
-			ptr_origin_objval = s_sol2_objval;
-			ptr_origin_objidx = s_sol2_objidx;
-			ptr_origin_lrcsval = s_sol2_lrcsval;
-			ptr_target_sol = s_sol1;
-			ptr_target_objval = s_sol1_objval;
-			ptr_target_objidx = s_sol1_objidx;
-			ptr_target_lrcsval = s_sol1_lrcsval;
-		}
 
 		/* copy from original solution to target solution */
 		num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
@@ -1014,26 +908,148 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		__syncthreads();
 
 
-		if (ptr_target_objval[_mCAI] >= ptr_origin_objval[_mCAI] &&
-			ptr_target_objval[_mHD] >= ptr_origin_objval[_mHD] &&
-			ptr_target_objval[_MLRCS] <= ptr_origin_objval[_MLRCS])
-		{
-			if (sol_num == FIRST_SOL)
-				sol_num = SECOND_SOL;
-			else
-				sol_num = FIRST_SOL;
+
+
+		/* ------------------------------ sorting solutions which are size of 2N ------------------------------ */
+		// writing to global memory from shared memory  .... solution, objective value, objective index, lrcs...  
+		num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
+		for (i = 0; i < num_partition; i++) {
+			idx = blockDim.x * i + threadIdx.x;
+			if (idx < len_sol) {
+				d_pop[blockIdx.x * len_sol + idx] = ptr_origin_sol[idx];
+				d_pop[gridDim.x * len_sol + blockIdx.x * len_sol + idx] = ptr_target_sol[idx];
+			}
 		}
+		
+		if (threadIdx.x == 0)
+		{
+			d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI] = ptr_origin_objval[_mCAI];
+			d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD] = ptr_origin_objval[_mHD];
+			d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] = ptr_origin_objval[_MLRCS];
+			
+			d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mCAI] = ptr_target_objval[_mCAI];
+			d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mHD] = ptr_target_objval[_mHD];
+			d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _MLRCS] = ptr_target_objval[_MLRCS];
+		
+			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2] = ptr_origin_objidx[_mCAI * 2];
+			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2] = ptr_origin_objidx[_mHD * 2];
+			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2 + 1] = ptr_origin_objidx[_mHD * 2 + 1];
+			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2] = ptr_origin_objidx[_MLRCS * 2];
+			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1] = ptr_origin_objidx[_MLRCS * 2 + 1];
 
-	}
+			d_objidx[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM * 2 + _mCAI * 2] = ptr_target_objidx[_mCAI * 2];
+			d_objidx[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM * 2 + _mHD * 2] = ptr_target_objidx[_mHD * 2];
+			d_objidx[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM * 2 + _mHD * 2 + 1] = ptr_target_objidx[_mHD * 2 + 1];
+			d_objidx[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM * 2 + _MLRCS * 2] = ptr_target_objidx[_MLRCS * 2];
+			d_objidx[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1] = ptr_target_objidx[_MLRCS * 2 + 1];
 
-	
-	if (sol_num == FIRST_SOL) {
-		ptr_origin_sol = s_sol1;
-		ptr_origin_objval = s_sol1_objval;
-	}
-	else {
-		ptr_origin_sol = s_sol2;
-		ptr_origin_objval = s_sol2_objval;
+			d_lrcsval[blockIdx.x * 3 + P] = ptr_origin_lrcsval[P];
+			d_lrcsval[blockIdx.x * 3 + Q] = ptr_origin_lrcsval[Q];
+			d_lrcsval[blockIdx.x * 3 + L] = ptr_origin_lrcsval[L];
+
+			d_lrcsval[(gridDim.x + blockIdx.x) * 3 + P] = ptr_target_lrcsval[P];
+			d_lrcsval[(gridDim.x + blockIdx.x) * 3 + Q] = ptr_target_lrcsval[Q];
+			d_lrcsval[(gridDim.x + blockIdx.x) * 3 + L] = ptr_target_lrcsval[L];
+
+			d_check_read[blockIdx.x] = true; 
+			d_check_read[gridDim.x + blockIdx.x] = true;
+			d_check_write[blockIdx.x] = false;
+			d_check_write[gridDim.x + blockIdx.x] = false;
+		}
+		g.sync();
+		// --------------------------------------------------------------------------------------------------------------
+
+		num_partition = (gridDim.x * 2 % blockDim.x == 0) ? (gridDim.x * 2 / blockDim.x) : (gridDim.x * 2 / blockDim.x) + 1;
+		while (d_check_read[blockIdx.x] || d_check_read[gridDim.x + blockIdx.x]) {
+			if (d_check_read[blockIdx.x]) {
+				for (i = 0; i < num_partition; i++)
+				{
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx != blockIdx.x && idx < gridDim.x * 2 && d_check_read[idx])
+					{
+						if (ptr_origin_objval[_mCAI] == d_objval[idx * OBJECTIVE_NUM + _mCAI] &&
+							ptr_origin_objval[_mHD] == d_objval[idx * OBJECTIVE_NUM + _mHD] &&
+							ptr_origin_objval[_MLRCS] == d_objval[idx * OBJECTIVE_NUM + _MLRCS]
+							)
+							continue;
+						else if (ptr_origin_objval[_mCAI] <= d_objval[idx * OBJECTIVE_NUM + _mCAI] &&
+							ptr_origin_objval[_mHD] <= d_objval[idx * OBJECTIVE_NUM + _mHD] &&
+							ptr_origin_objval[_MLRCS] >= d_objval[idx * OBJECTIVE_NUM + _MLRCS]
+							) 
+						{
+							d_check_write[blockIdx.x] = true;
+							break;
+						}
+					}
+				}
+			}
+
+			if (d_check_read[gridDim.x + blockIdx.x]) {
+				for (i = 0; i < num_partition; i++)
+				{
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx != gridDim.x + blockIdx.x && idx < gridDim.x * 2 && d_check_read[idx])
+					{
+						if (ptr_target_objval[_mCAI] == d_objval[idx * OBJECTIVE_NUM + _mCAI] &&
+							ptr_target_objval[_mHD] == d_objval[idx * OBJECTIVE_NUM + _mHD] &&
+							ptr_target_objval[_MLRCS] == d_objval[idx * OBJECTIVE_NUM + _MLRCS]
+							)
+							continue;
+						else if (ptr_target_objval[_mCAI] <= d_objval[idx * OBJECTIVE_NUM + _mCAI] &&
+							ptr_target_objval[_mHD] <= d_objval[idx * OBJECTIVE_NUM + _mHD] &&
+							ptr_target_objval[_MLRCS] >= d_objval[idx * OBJECTIVE_NUM + _MLRCS]
+							)
+						{
+							d_check_write[gridDim.x + blockIdx.x] = true;
+							break;
+						}
+					}
+				}
+			}
+			
+			g.sync();
+			if (threadIdx.x == 0) {
+				if (d_check_write[blockIdx.x] == false) {
+					while (atomicCAS(&lock, 0, 1) != 0);
+					d_sorted_array[sorting_idx++] = blockIdx.x;
+					atomicExch(&lock, 0);
+				}
+
+				if (d_check_write[gridDim.x + blockIdx.x] == false) {
+					while (atomicCAS(&lock, 0, 1) != 0);
+					d_sorted_array[sorting_idx++] = gridDim.x + blockIdx.x;
+					atomicExch(&lock, 0);
+				}
+				d_check_read[blockIdx.x] = d_check_write[blockIdx.x];
+				d_check_read[gridDim.x + blockIdx.x] = d_check_write[gridDim.x + blockIdx.x];
+				d_check_write[blockDim.x] = false;
+				d_check_write[gridDim.x + blockDim.x] = false;
+			}
+			g.sync();
+		}
+		
+		num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
+		for (i = 0; i < num_partition; i++) {
+			idx = blockDim.x * i + threadIdx.x;
+			if (idx < len_sol)
+				ptr_origin_sol[idx] = d_pop[d_sorted_array[blockIdx.x] * len_sol + idx];
+		}
+		if (threadIdx.x == 0) {
+			ptr_origin_objval[_mCAI] = d_objval[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM + _mCAI];
+			ptr_origin_objval[_mHD] = d_objval[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM + _mHD];
+			ptr_origin_objval[_MLRCS] = d_objval[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM + _MLRCS];
+			ptr_origin_objidx[_mCAI * 2] = d_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _mCAI * 2];
+			ptr_origin_objidx[_mHD * 2] = d_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _mHD * 2];
+			ptr_origin_objidx[_mHD * 2 + 1] = d_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _mHD * 2 + 1];
+			ptr_origin_objidx[_MLRCS * 2] = d_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2];
+			ptr_origin_objidx[_MLRCS * 2 + 1] = d_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1];
+			ptr_origin_lrcsval[P] = d_lrcsval[d_sorted_array[blockIdx.x] * 3 + P];
+			ptr_origin_lrcsval[Q] = d_lrcsval[d_sorted_array[blockIdx.x] * 3 + Q];
+			ptr_origin_lrcsval[L] = d_lrcsval[d_sorted_array[blockIdx.x] * 3 + L];
+		}
+		/* ---------------------------------------- end of sorting ----------------------------------------*/
+
+
 	}
 
 
@@ -1051,7 +1067,6 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD] = ptr_origin_objval[_mHD];
 		d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] = ptr_origin_objval[_MLRCS];
 	}
-
 
 
 	return;
