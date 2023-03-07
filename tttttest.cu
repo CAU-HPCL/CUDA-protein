@@ -11,7 +11,7 @@
 #include <cooperative_groups.h>
 #include <cuda.h>
 
-using namespace cooperative_groups;
+using namespace cooperative_groups;						// for synchronize between blocks in a single grid
 
 #define _CRT_SECURE_NO_WARINGS
 
@@ -23,7 +23,7 @@ using namespace cooperative_groups;
 
 #define RANDOM 0
 #define UPPER 1
-#define LOWER 2
+//#define LOWER 2
 
 #define OBJECTIVE_NUM 3
 #define _mCAI 0
@@ -34,8 +34,8 @@ using namespace cooperative_groups;
 #define Q 1
 #define L 2
 
-#define FIRST_SOL 1
-#define SECOND_SOL 2
+//#define FIRST_SOL 1
+//#define SECOND_SOL 2
 
 
 /* -------------------- 20 kinds of amino acids & weights are sorted ascending order -------------------- */
@@ -155,7 +155,7 @@ __device__ void mutation(curandStateXORWOW* state, const char* codon_info, char*
 		}
 		break;
 
-	case LOWER:
+	/*case LOWER:
 		new_idx = (char)(curand_uniform(state) * origin_pos);
 		if (cd_prob <= mprob && origin_pos != 0) {
 			while (new_idx == origin_pos) {
@@ -165,9 +165,8 @@ __device__ void mutation(curandStateXORWOW* state, const char* codon_info, char*
 			target[1] = codon_info[new_idx * CODON_SIZE + 1];
 			target[2] = codon_info[new_idx * CODON_SIZE + 2];
 		}
-		break;
+		break;*/
 	}
-
 
 	return;
 }
@@ -186,11 +185,11 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 
 
 __device__ int lock = 0;
-__device__ int sorting_idx;
+__device__ int sorting_idx = 1;
 
 
 __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx, const char* d_amino_startpos,
-	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, int* d_objidx, int* d_lrcsval, 
+	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval, 
 	int *d_sorted_array, bool *d_check_read, bool *d_check_write)
 {
 	grid_group g = this_grid();
@@ -213,9 +212,9 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 	char lrcs_i, lrcs_j;
 	int lrcs_p, lrcs_q, lrcs_l, tmp_l;
 
-	float section_low, section_high, adjust_prob;
-	char direct;
-	int cnt;
+	//float section_low, section_high, adjust_prob;
+	//char direct;
+	//int cnt;
 
 	id = blockDim.x * blockIdx.x + threadIdx.x;
 	localState = state[id];
@@ -345,6 +344,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		}
 	}
 	__syncthreads();
+	/* -------------------- end of initialize -------------------- */
 
 
 	/* calculate mCAI */
@@ -574,7 +574,6 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		ptr_origin_objidx[_MLRCS * 2 + 1] = lrcs_j;
 	}
 	__syncthreads();
-	/* -------------------- end of initialize -------------------- */
 
 
 
@@ -909,7 +908,6 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 
 
 
-
 		/* ------------------------------ sorting solutions which are size of 2N ------------------------------ */
 		// writing to global memory from shared memory  .... solution, objective value, objective index, lrcs...  
 		num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
@@ -1051,7 +1049,6 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		}
 		/* ---------------------------------------- end of sorting ----------------------------------------*/
 
-
 	}
 
 
@@ -1170,7 +1167,7 @@ int main()
 		printf("input mutation probability (0 ~ 1 value) : \n");
 		return EXIT_FAILURE;
 	}
-	printf("input number of limit : "); scanf("%d", &limit);
+	//printf("input number of limit : "); scanf("%d", &limit);
 	printf("input thread per block x value --> number of thread  warp size (32) * x : "); scanf("%d", &x);
 
 
@@ -1267,7 +1264,7 @@ int main()
 		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
 		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
 		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, len_amino_seq, cds_num, cycle, mprob
-			, d_pop, d_objidx, d_objval, d_lrcsval, d_sorted_array, d_check_read, d_check_write);
+			, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, d_check_read, d_check_write);
 	cudaEventRecord(d_end);
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
@@ -1289,18 +1286,18 @@ int main()
 	printf("minimum distance to the ideal point : %f\n", min_dist);
 
 	/* print solution */
-	for (i = 0; i < pop_size; i++)
-	{
-		printf("%d solution\n", i + 1);
-		for (j = 0; j < cds_num; j++) {
-			printf("%d cds : ", j + 1);
-			for (k = 0; k < len_cds; k++) {
-				printf("%c", h_pop[len_sol * i + len_cds * j + k]);
-			}
-			printf("\n");
-		}
-		printf("\n");
-	}
+	//for (i = 0; i < pop_size; i++)
+	//{
+	//	printf("%d solution\n", i + 1);
+	//	for (j = 0; j < cds_num; j++) {
+	//		printf("%d cds : ", j + 1);
+	//		for (k = 0; k < len_cds; k++) {
+	//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
+	//		}
+	//		printf("\n");
+	//	}
+	//	printf("\n");
+	//}
 
 
 	/* print objective value */
