@@ -1097,21 +1097,23 @@ int main()
 {
 	srand((unsigned int)time(NULL));
 
+	int x;
+	float min_dist;
+	float mprob;							// mutation probability
 	char input_file[32];
 	char* amino_seq;						// store amino sequences from input file
 	char* h_amino_seq_idx;					// notify index of amino abbreviation array corresponding input amino sequences
 	char* h_pop;							// store population (a set of solutions)
-	float* h_objval;						// store objective values of population (solution 1, solution 2 .... solution n)
+	char* h_objidx;
 	char* h_amino_startpos;					// notify position of according amino abbreviation index
+	int* h_lrcsval;
 	int len_amino_seq, len_cds, len_sol;
 	int pop_size;
 	int cycle;
 	int cds_num;							// size of solution equal to number of CDSs(codon sequences) in a solution
-	float mprob;							// mutation probability
-	int x;
-	float lowest_mcai;						// for divide initial solution section
-	float min_dist;
-	int limit;
+	float* h_objval;						// store objective values of population (solution 1, solution 2 .... solution n)
+	//float lowest_mcai;						// for divide initial solution section
+	//int limit;
 
 	char tmp;
 	int i, j, k;
@@ -1123,17 +1125,17 @@ int main()
 	int numBlocks;
 	int threadsPerBlock;
 
+	bool* d_check_read, * d_check_write;
 	char* d_amino_seq_idx;
 	char* d_pop;
-	float* d_objval;
+	char* d_objidx;
 	char* d_amino_startpos;
 	char* d_codons;
 	char* d_codons_num;
-	float* d_codons_weight;
-	int* d_objidx;
 	int* d_lrcsval;
 	int* d_sorted_array;
-	bool* d_check_read, * d_check_write;
+	float* d_objval;
+	float* d_codons_weight;
 	curandStateXORWOW* genState;
 
 	/* for time and mcai section cehck */
@@ -1217,10 +1219,10 @@ int main()
 	}
 
 	/* caculate the smallest mCAI value */
-	lowest_mcai = 1.f;
-	for (i = 0; i < len_amino_seq; i++) {
-		lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
-	}
+	//lowest_mcai = 1.f;
+	//for (i = 0; i < len_amino_seq; i++) {
+	//	lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
+	//}
 	/* ---------------------------------------- end of preprocessing ---------------------------------------- */
 
 
