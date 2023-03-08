@@ -11,10 +11,19 @@
 #include <cooperative_groups.h>
 #include <cuda.h>
 
+#define CHECK_CUDA(func)                                                       \
+{                                                                              \
+    cudaError_t status = (func);                                               \
+    if (status != cudaSuccess) {                                               \
+        printf("CUDA API failed at line %d with error: %s (%d)\n",             \
+               __LINE__, cudaGetErrorString(status), status);                  \
+        return EXIT_FAILURE;                                                   \
+    }                                                                          \
+}       
+
 #define _CRT_SECURE_NO_WARINGS
 
 
-#define WARP_SIZE 32
 
 #define NOT_FOUND -1
 #define CODON_SIZE 3
@@ -186,12 +195,11 @@ __device__ int lock = 0;
 __device__ int sorting_idx = 0;
 __device__ int counter = 0;
 
+#if 0
 __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx, const char* d_amino_startpos,
 	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval,
 	int* d_sorted_array, bool* d_check_read, bool* d_check_write)
 {
-	//cooperative_groups::grid_group g = cooperative_groups::this_grid();
-
 	curandStateXORWOW localState;
 	int i, j, k, l;
 	int idx, seq_idx;
@@ -904,6 +912,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		}
 		__syncthreads();
 
+
 		/* ------------------------------ sorting solutions which are size of 2N ------------------------------ */
 		// writing to global memory from shared memory  .... solution, objective value, objective index, lrcs...  
 		num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
@@ -947,14 +956,18 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 			d_check_write[blockIdx.x] = false;
 			d_check_write[gridDim.x + blockIdx.x] = false;
 		}
-		if (blockIdx.x == 0 && threadIdx.x == 0)
+		if (blockIdx.x == 0 && threadIdx.x == 0) {
 			sorting_idx = 0;
-		//g.sync();
-		atomicAdd(&counter, 1);
-		if (counter == gridDim.x * blockDim.x) {
-			counter = 0;
 		}
-		__syncthreads();
+		//g.sync();
+
+		atomicAdd(&counter, 1);
+		while (true) {
+			if (counter == gridDim.x * blockDim.x) 
+				break;
+		}
+		if (blockIdx.x == 0 && threadIdx.x == 0)
+			counter = 0;
 		// --------------------------------------------------------------------------------------------------------------
 
 
@@ -1050,6 +1063,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		}
 		__syncthreads();
 		/* ---------------------------------------- end of sorting ----------------------------------------*/
+
 	}
 
 
@@ -1066,21 +1080,22 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI] = ptr_origin_objval[_mCAI];
 		d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD] = ptr_origin_objval[_mHD];
 		d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] = ptr_origin_objval[_MLRCS];
-		d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mCAI] = ptr_target_objval[_mCAI];
-		d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mHD] = ptr_target_objval[_mHD];
-		d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _MLRCS] = ptr_target_objval[_MLRCS];
+		//d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mCAI] = ptr_target_objval[_mCAI];
+		//d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mHD] = ptr_target_objval[_mHD];
+		//d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _MLRCS] = ptr_target_objval[_MLRCS];
 	}
 
 
 	return;
 }
+#endif
 
 #define IDEAL_MCAI 1
 #define IDEAL_MHD 0.4f
 #define IDEAL_MLRCS 0
 #define EUCLID(val1, val2, val3) (float)sqrt(pow(IDEAL_MCAI - val1, 2) + pow(IDEAL_MHD - val2, 2) + pow(val3, 2))
 /* Minimum distance to optimal objective value(point) */
-float MinEuclid(const float* objval, int pop_size)
+__host__ float MinEuclid(const float* objval, int pop_size)
 {
 	float res;
 	float tmp;
@@ -1095,29 +1110,408 @@ float MinEuclid(const float* objval, int pop_size)
 	return res;
 }
 
+__constant__ float c_codons_weight[61];
+__constant__ char c_amino_startpos[20];
+__constant__ char c_codons[61 * CODON_SIZE + 1];
+__constant__ char c_codons_num[20];
+__constant__ int c_len_amino_seq;
+__constant__ int c_cds_num;
+__constant__ int c_cycle;
+__constant__ float c_mprob;
 
+__global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_idx, char* d_pop, float* d_objval, char* d_obj_idx, int* d_lrcsval)
+{
+	curandStateXORWOW localState;
+	int id;
+	char pos;
+	int i, j, k, l;
+	int idx, seq_idx;
+	int num_partition;
+	int len_cds, len_sol;
+	char lrcs_i, lrcs_j;
+	int lrcs_p, lrcs_q, lrcs_l, tmp_l;
+
+	
+	id = blockDim.x * blockIdx.x + threadIdx.x;
+	localState = state[id];
+	len_cds = c_len_amino_seq * CODON_SIZE;
+	len_sol = len_cds * c_cds_num;
+	
+	extern __shared__ int smem[];
+	__shared__ int* s_lrcs_tid;
+	__shared__ int* s_sol_lrcsval;
+	__shared__ float* s_sol_objval;
+	__shared__ float* s_obj_compute;
+	__shared__ char* s_amino_seq_idx;
+	__shared__ char* s_sol;
+	__shared__ char* s_sol_objidx;
+
+	s_lrcs_tid = smem;
+	s_sol_lrcsval = (int*)&s_lrcs_tid[blockDim.x];
+	s_sol_objval = (float*)&s_sol_lrcsval[3];
+	s_obj_compute = (float*)&s_sol_objval[OBJECTIVE_NUM];
+	s_amino_seq_idx = (char*)&s_obj_compute[blockDim.x];
+	s_sol = (char*)&s_amino_seq_idx[c_len_amino_seq];
+	s_sol_objidx = (char*)&s_sol[len_sol];
+
+	/* copy from global memory to shared memory */
+	num_partition = (c_len_amino_seq % blockDim.x == 0) ? c_len_amino_seq / blockDim.x : c_len_amino_seq / blockDim.x + 1;
+	for (i = 0; i < num_partition; i++) {
+		idx = blockDim.x * i + threadIdx.x;
+		if (idx < c_len_amino_seq) {
+			s_amino_seq_idx[idx] = d_amino_seq_idx[idx];
+		}
+	}
+	__syncthreads();
+
+	/* initialize solution */
+	if (blockIdx.x == gridDim.x - 1)
+	{
+		num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
+		for (i = 0; i < num_partition; i++) {
+			idx = blockDim.x * i + threadIdx.x;
+			if (idx < c_len_amino_seq * c_cds_num) {
+				seq_idx = idx % c_len_amino_seq;
+
+				pos = c_codons_num[s_amino_seq_idx[seq_idx]] - 1;
+
+				j = idx * CODON_SIZE;
+				k = (c_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
+
+				s_sol[j] = c_codons[k];
+				s_sol[j + 1] = c_codons[k + 1];
+				s_sol[j + 2] = c_codons[k + 2];
+			}
+		}
+	}
+	else {
+		num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
+		for (i = 0; i < num_partition; i++) {
+			idx = blockDim.x * i + threadIdx.x;
+			if (idx < c_len_amino_seq * c_cds_num) {
+				seq_idx = idx % c_len_amino_seq;
+
+				do {
+					pos = (char)(curand_uniform(&localState) * c_codons_num[s_amino_seq_idx[seq_idx]]);
+				} while (pos == c_codons_num[s_amino_seq_idx[seq_idx]]);
+
+				j = idx * CODON_SIZE;
+				k = (c_amino_startpos[s_amino_seq_idx[seq_idx]] + pos) * CODON_SIZE;
+
+				s_sol[j] = c_codons[k];
+				s_sol[j + 1] = c_codons[k + 1];
+				s_sol[j + 2] = c_codons[k + 2];
+			}
+		}
+	}
+	__syncthreads();
+
+	/* calculate mCAI */
+	num_partition = (c_len_amino_seq % blockDim.x == 0) ? (c_len_amino_seq / blockDim.x) : (c_len_amino_seq / blockDim.x) + 1;
+	for (i = 0; i < c_cds_num; i++) {
+		s_obj_compute[threadIdx.x] = 1;
+
+		for (j = 0; j < num_partition; j++) {
+			seq_idx = blockDim.x * j + threadIdx.x;
+			if (seq_idx < c_len_amino_seq) {
+				pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[len_cds * i + seq_idx * CODON_SIZE],
+					c_codons_num[s_amino_seq_idx[seq_idx]]);
+				s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / len_amino_seq);
+			}
+		}
+		__syncthreads();
+
+		j = blockDim.x / 2;
+		while (j != 0) {
+			if (threadIdx.x < j) {
+				s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+			}
+			__syncthreads();
+
+			j /= 2;
+		}
+
+		if (threadIdx.x == 0) {
+			if (i == 0) {
+				s_sol_objval[_mCAI] = s_obj_compute[0];
+				s_sol_objidx[_mCAI * 2] = i;
+			}
+			else if (s_obj_compute[0] <= s_sol_objval[_mCAI]) {
+				s_sol_objval[_mCAI] = s_obj_compute[0];
+				s_sol_objidx[_mCAI * 2] = i;
+			}
+		}
+		__syncthreads();
+
+	}
+
+
+	/* calculate mHD */
+	num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
+	for (i = 0; i < cds_num; i++) {
+		for (j = i + 1; j < cds_num; j++) {
+			s_obj_compute[threadIdx.x] = 0;
+
+			for (k = 0; k < num_partition; k++) {
+				seq_idx = blockDim.x * k + threadIdx.x;
+
+				if (seq_idx < len_cds && (s_sol[len_cds * i + seq_idx] != s_sol[len_cds * j + seq_idx])) {
+					s_obj_compute[threadIdx.x] += 1;
+				}
+			}
+			__syncthreads();
+
+			k = blockDim.x / 2;
+			while (k != 0) {
+				if (threadIdx.x < k) {
+					s_obj_compute[threadIdx.x] += s_obj_compute[threadIdx.x + k];
+				}
+				__syncthreads();
+
+				k /= 2;
+			}
+
+			if (threadIdx.x == 0) {
+				if (i == 0 && j == 1) {
+					s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
+					s_sol_objidx[_mHD * 2] = i;
+					s_sol_objidx[_mHD * 2 + 1] = j;
+				}
+				else if ((s_obj_compute[0] / len_cds) <= s_sol_objval[_mHD]) {
+					s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
+					s_sol_objidx[_mHD * 2] = i;
+					s_sol_objidx[_mHD * 2 + 1] = j;
+				}
+			}
+			__syncthreads();
+
+		}
+	}
+
+	/* calculate MLRCS */
+	s_obj_compute[threadIdx.x] = NOT_FOUND;
+	lrcs_l = 0;
+	for (i = 0; i < cds_num; i++) {
+		for (j = i; j < cds_num; j++) {
+			idx = threadIdx.x;
+
+			if (i == j)
+			{
+				while (idx < 2 * len_cds + 1)
+				{
+					if (idx < len_cds + 1) {
+						l = idx + 1;
+						seq_idx = len_cds - l;
+
+						for (k = 0; k < l; k++) {
+							if (k == 0 || (seq_idx == -1))
+								tmp_l = 0;
+							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1]) {
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = seq_idx + k + 1 - lrcs_l;
+									lrcs_q = k - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+					}
+					else {
+						l = 2 * len_cds + 1 - idx;
+						seq_idx = len_cds - l;
+
+						for (k = 0; k < l; k++) {
+							if (k == 0)
+								tmp_l = 0;
+							else if (s_sol[len_cds * i + k - 1] == s_sol[len_cds * j + seq_idx + k])
+							{
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = k - lrcs_l;
+									lrcs_q = seq_idx + k + 1 - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+
+					}
+
+					idx += blockDim.x;
+				}
+			}
+			else
+			{
+				while (idx < 2 * len_cds + 1)
+				{
+					if (idx < len_cds + 1) {
+						l = idx + 1;
+						seq_idx = len_cds - l;
+						for (k = 0; k < l; k++) {
+							if (k == 0)
+								tmp_l = 0;
+							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1]) {
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = seq_idx + k + 1 - lrcs_l;
+									lrcs_q = k - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+					}
+					else {
+						l = 2 * len_cds + 1 - idx;
+						seq_idx = len_cds - l;
+
+						for (k = 0; k < l; k++) {
+							if (k == 0)
+								tmp_l = 0;
+							else if (s_sol[len_cds * i + k - 1] == s_sol[len_cds * j + seq_idx + k])
+							{
+								tmp_l++;
+								if (tmp_l >= lrcs_l) {
+									lrcs_l = tmp_l;
+									s_obj_compute[threadIdx.x] = lrcs_l;
+									lrcs_p = k - lrcs_l;
+									lrcs_q = seq_idx + k + 1 - lrcs_l;
+									lrcs_i = (char)i;
+									lrcs_j = (char)j;
+								}
+							}
+							else
+								tmp_l = 0;
+						}
+
+					}
+
+					idx += blockDim.x;
+				}
+			}
+
+		}
+	}
+	__syncthreads();
+
+	j = blockDim.x / 2;
+	s_lrcs_tid[threadIdx.x] = threadIdx.x;
+	__syncthreads();
+	while (j != 0)
+	{
+		if (threadIdx.x < j && (s_obj_compute[threadIdx.x + j] > s_obj_compute[threadIdx.x]))
+		{
+			s_obj_compute[threadIdx.x] = s_obj_compute[threadIdx.x + j];
+			s_lrcs_tid[threadIdx.x] = s_lrcs_tid[threadIdx.x + j];
+		}
+		__syncthreads();
+
+		j /= 2;
+	}
+
+	if (threadIdx.x == s_lrcs_tid[0])
+	{
+		s_sol_lrcsval[L] = lrcs_l;
+		s_sol_lrcsval[P] = lrcs_p;
+		s_sol_lrcsval[Q] = lrcs_q;
+
+		s_sol_objval[_MLRCS] = (float)lrcs_l / len_cds;
+		s_sol_objidx[_MLRCS * 2] = lrcs_i;
+		s_sol_objidx[_MLRCS * 2 + 1] = lrcs_j;
+	}
+	__syncthreads();
+
+	/* copy from shared memory to global memory */
+	num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
+	for (i = 0; i < num_partition; i++) {
+		idx = blockDim.x * i + threadIdx.x;
+		if (idx < len_sol)
+			d_pop[blockIdx.x * len_sol + idx] = s_sol[idx];
+	}
+
+	if (threadIdx.x == 0)
+	{
+		d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI] = s_sol_objval[_mCAI];
+		d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD] = s_sol_objval[_mHD];
+		d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] = s_sol_objval[_MLRCS];
+		
+		d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2] = s_sol_objidx[_mCAI * 2];
+		d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2] = s_sol_objidx[_mHD * 2];
+		d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2 + 1] = s_sol_objidx[_mHD * 2 + 1];
+		d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2] = s_sol_objidx[_MLRCS * 2];
+		d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1] = s_sol_objidx[_MLRCS * 2 + 1];
+
+		d_lrcsval[blockIdx.x * 3 + P] = s_sol_lrcsval[P];
+		d_lrcsval[blockIdx.x * 3 + Q] = s_sol_lrcsval[Q];
+		d_lrcsval[blockIdx.x * 3 + L] = s_sol_lrcsval[L];
+	}
+
+	return;
+}
 
 int main()
 {
 	srand((unsigned int)time(NULL));
 
-	int x;
-	float min_dist;
-	float mprob;							// mutation probability
+	/* To get information of Deivce */
+	int dev = 0;							// number of device (GPU)
+	int maxSharedMemPerBlock;
+	int maxSharedMemPerProcessor;
+	int totalConstantMem;
+	int maxRegisterPerProcessor;
+	int maxRegisterPerBlock;
+	cudaDeviceProp deviceProp;
+	
+	CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, dev))
+	CHECK_CUDA(cudaDeviceGetAttribute(&maxSharedMemPerBlock, cudaDevAttrMaxSharedMemoryPerBlock, dev))
+	CHECK_CUDA(cudaDeviceGetAttribute(&maxSharedMemPerProcessor, cudaDevAttrMaxRegistersPerMultiprocessor, dev))
+	CHECK_CUDA(cudaDeviceGetAttribute(&totalConstantMem, cudaDevAttrTotalConstantMemory, dev))
+	CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerProcessor, cudaDevAttrMaxRegistersPerMultiprocessor, dev))
+	CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerBlock, cudaDevAttrMaxRegistersPerBlock, dev))
+	
+	printf("Device #%d:\n", dev);
+	printf("Name: %s\n", deviceProp.name);
+	printf("Compute capability: %d.%d\n", deviceProp.major, deviceProp.minor);
+	printf("Clock rate: %d MHz\n", deviceProp.clockRate / 1000);
+	printf("Global memory size: %lu MB\n", deviceProp.totalGlobalMem / (1024 * 1024));
+	printf("Max thread dimensions: (%d, %d, %d)\n", deviceProp.maxThreadsDim[0], deviceProp.maxThreadsDim[1], deviceProp.maxThreadsDim[2]);
+	printf("Max grid dimensions: (%d, %d, %d)\n", deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]);
+	printf("Total constant memory: %d bytes\n", totalConstantMem);
+	printf("Max threads per SM: %d\n", deviceProp.maxThreadsPerMultiProcessor);
+	printf("Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
+	printf("Maximum shared memory per SM: %d bytes\n", maxSharedMemPerProcessor);
+	printf("Maximum shared memory per block: %d bytes\n", maxSharedMemPerBlock);
+	printf("Maximum number of registers per SM: %d\n", maxRegisterPerProcessor);
+	printf("Maximum number of registers per block: %d\n", maxRegisterPerBlock);
+	printf("\n");
+
 	char input_file[32];
 	char* amino_seq;						// store amino sequences from input file
 	char* h_amino_seq_idx;					// notify index of amino abbreviation array corresponding input amino sequences
-	char* h_pop;							// store population (a set of solutions)
-	char* h_objidx;
 	char* h_amino_startpos;					// notify position of according amino abbreviation index
+	char* h_pop;							// store population (a set of solutions)
+	float* h_objval;						// store objective values of population (solution 1, solution 2 .... solution n)
+	char* h_objidx;
 	int* h_lrcsval;
 	int len_amino_seq, len_cds, len_sol;
 	int pop_size;
 	int cycle;
 	int cds_num;							// size of solution equal to number of CDSs(codon sequences) in a solution
-	float* h_objval;						// store objective values of population (solution 1, solution 2 .... solution n)
-	//float lowest_mcai;						// for divide initial solution section
-	//int limit;
+	float mprob;							// mutation probability
+	float min_dist;
 
 	char tmp;
 	int i, j, k;
@@ -1125,32 +1519,24 @@ int main()
 	char buf[256];
 	FILE* fp;
 
-
 	int numBlocks;
 	int threadsPerBlock;
 
-	bool* d_check_read, * d_check_write;
 	char* d_amino_seq_idx;
 	char* d_pop;
+	float* d_objval;
 	char* d_objidx;
-	char* d_amino_startpos;
-	char* d_codons;
-	char* d_codons_num;
 	int* d_lrcsval;
 	int* d_sorted_array;
-	float* d_objval;
-	float* d_codons_weight;
+	bool* d_check_read, * d_check_write;
 	curandStateXORWOW* genState;
 
-	/* for time and mcai section cehck */
 	cudaEvent_t d_start, d_end;
 	float kernel_time;
-	cudaEventCreate(&d_start);
-	cudaEventCreate(&d_end);
+	CHECK_CUDA(cudaEventCreate(&d_start))
+	CHECK_CUDA(cudaEventCreate(&d_end))
 
 
-
-	/* ---------------------------------------- preprocessing ---------------------------------------- */
 	/* input parameter values */
 	printf("input file name : "); scanf("%s", input_file);
 	printf("input number of cycle : "); scanf("%d", &cycle);					// if number of cycle is zero we can check initial population
@@ -1173,8 +1559,7 @@ int main()
 		printf("input mutation probability (0 ~ 1 value) : \n");
 		return EXIT_FAILURE;
 	}
-	//printf("input number of limit : "); scanf("%d", &limit);
-	printf("input thread per block x value --> number of thread  warp size (32) * x : "); scanf("%d", &x);
+	printf("input number of threads per block --> number of thread  warp size (32) * x : "); scanf("%d", &threadsPerBlock);
 
 
 	/* read input file (fasta format) */
@@ -1222,15 +1607,6 @@ int main()
 		h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
 	}
 
-	/* caculate the smallest mCAI value */
-	//lowest_mcai = 1.f;
-	//for (i = 0; i < len_amino_seq; i++) {
-	//	lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
-	//}
-	/* ---------------------------------------- end of preprocessing ---------------------------------------- */
-
-
-	threadsPerBlock = WARP_SIZE * x;
 	numBlocks = pop_size;
 
 	/* host memory allocation */
@@ -1242,11 +1618,7 @@ int main()
 
 	/* device memory allocation */
 	cudaMalloc((void**)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock);
-	cudaMalloc((void**)&d_codons, sizeof(Codons));
-	cudaMalloc((void**)&d_codons_num, sizeof(Codons_num));
-	cudaMalloc((void**)&d_codons_weight, sizeof(Codons_weight));
 	cudaMalloc((void**)&d_amino_seq_idx, sizeof(char) * len_amino_seq);
-	cudaMalloc((void**)&d_amino_startpos, sizeof(char) * 20);
 	cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol * 2);
 	cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2);
 	cudaMalloc((void**)&d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2);
@@ -1258,38 +1630,31 @@ int main()
 
 	/* memory copy host to device */
 	cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_amino_startpos, h_amino_startpos, sizeof(char) * 20, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_codons, Codons, sizeof(Codons), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_codons_num, Codons_num, sizeof(Codons_num), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_codons_weight, Codons_weight, sizeof(Codons_weight), cudaMemcpyHostToDevice);
-
-	cudaError_t err = cudaMalloc(NULL, 1024);
+	cudaMemcpyToSymbol()
 	
-	/* optimize kerenl call */
-	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
-	cudaEventRecord(d_start);
 
-	mainKernel << <numBlocks, threadsPerBlock,
-		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
-		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
-		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, len_amino_seq, cds_num, cycle, mprob
-			, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, d_check_read, d_check_write);
-	cudaEventRecord(d_end);
-	cudaEventSynchronize(d_end);
-	cudaEventElapsedTime(&kernel_time, d_start, d_end);
-
-	err = cudaGetLastError();
-	if (err != cudaSuccess) {
-		printf("CUDA error: %s\n", cudaGetErrorString(err));
-		return EXIT_FAILURE;
-	}
 
 	printf("using shared memory size : %d\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
 		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1));
+	
+	/* kerenl call */
+	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
+	cudaDeviceSynchronize();
+
+	cudaEventRecord(d_start);
+	mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) + 
+		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
+		(genState, d_codons, d_codons_num, d_codons_weight, d_amino_seq_idx, d_amino_startpos, len_amino_seq, cds_num, cycle, mprob
+			, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, d_check_read, d_check_write);
+	cudaDeviceSynchronize();
+	cudaEventRecord(d_end);
+	cudaEventSynchronize(d_end);
+	cudaEventElapsedTime(&kernel_time, d_start, d_end);
 	printf("\nGPU kerenl cycle time : %f second\n", kernel_time / 1000.f);
-	//printf("lowest mcai value : %f\n", lowest_mcai);
 
 
+	
+	
 	/* memory copy device to host */
 	cudaMemcpy(h_pop, d_pop, sizeof(char) * numBlocks * len_sol * 2, cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost);
@@ -1314,6 +1679,8 @@ int main()
 	//}
 
 
+
+	//printf("lowest mcai value : %f\n", lowest_mcai);
 	/* print objective value */
 	for (i = 0; i < pop_size; i++)
 	{
@@ -1335,11 +1702,7 @@ int main()
 
 	/* free deivce memory */
 	cudaFree(genState);
-	cudaFree(d_codons);
-	cudaFree(d_codons_num);
-	cudaFree(d_codons_weight);
 	cudaFree(d_amino_seq_idx);
-	cudaFree(d_amino_startpos);
 	cudaFree(d_pop);
 	cudaFree(d_objval);
 	cudaFree(d_objidx);
@@ -1350,8 +1713,6 @@ int main()
 	cudaEventDestroy(d_start);
 	cudaEventDestroy(d_end);
 
-	cudaFree(&err);
-
 	/* free host memory */
 	free(amino_seq);
 	free(h_amino_seq_idx);
@@ -1360,7 +1721,7 @@ int main()
 	free(h_objval);
 	free(h_objidx);
 	free(h_lrcsval);
-
+#endif
 
 	return EXIT_SUCCESS;
 }
