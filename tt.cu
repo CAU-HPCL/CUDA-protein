@@ -153,17 +153,17 @@ __device__ void mutation(curandStateXORWOW* state, const char* codon_info, char*
 		}
 		break;
 
-	/*case LOWER:
-		new_idx = (char)(curand_uniform(state) * origin_pos);
-		if (cd_prob <= mprob && origin_pos != 0) {
-			while (new_idx == origin_pos) {
-				new_idx = (char)(curand_uniform(state) * origin_pos);
+		/*case LOWER:
+			new_idx = (char)(curand_uniform(state) * origin_pos);
+			if (cd_prob <= mprob && origin_pos != 0) {
+				while (new_idx == origin_pos) {
+					new_idx = (char)(curand_uniform(state) * origin_pos);
+				}
+				target[0] = codon_info[new_idx * CODON_SIZE];
+				target[1] = codon_info[new_idx * CODON_SIZE + 1];
+				target[2] = codon_info[new_idx * CODON_SIZE + 2];
 			}
-			target[0] = codon_info[new_idx * CODON_SIZE];
-			target[1] = codon_info[new_idx * CODON_SIZE + 1];
-			target[2] = codon_info[new_idx * CODON_SIZE + 2];
-		}
-		break;*/
+			break;*/
 	}
 
 	return;
@@ -187,11 +187,11 @@ __device__ int sorting_idx = 0;
 __device__ int counter = 0;
 
 __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const char* d_codons_num, const float* d_codons_weight, const char* d_amino_seq_idx, const char* d_amino_startpos,
-	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval, 
-	int *d_sorted_array, bool *d_check_read, bool *d_check_write)
+	const int len_amino_seq, const int cds_num, const int cycle, const float mprob, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval,
+	int* d_sorted_array, bool* d_check_read, bool* d_check_write)
 {
 	//cooperative_groups::grid_group g = cooperative_groups::this_grid();
-	
+
 	curandStateXORWOW localState;
 	int i, j, k, l;
 	int idx, seq_idx;
@@ -914,7 +914,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 				d_pop[(gridDim.x + blockIdx.x) * len_sol + idx] = ptr_target_sol[idx];
 			}
 		}
-		
+
 		if (threadIdx.x == 0)
 		{
 			d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI] = ptr_origin_objval[_mCAI];
@@ -923,7 +923,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 			d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mCAI] = ptr_target_objval[_mCAI];
 			d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _mHD] = ptr_target_objval[_mHD];
 			d_objval[(gridDim.x + blockIdx.x) * OBJECTIVE_NUM + _MLRCS] = ptr_target_objval[_MLRCS];
-		
+
 			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2] = ptr_origin_objidx[_mCAI * 2];
 			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2] = ptr_origin_objidx[_mHD * 2];
 			d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2 + 1] = ptr_origin_objidx[_mHD * 2 + 1];
@@ -942,7 +942,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 			d_lrcsval[(gridDim.x + blockIdx.x) * 3 + Q] = ptr_target_lrcsval[Q];
 			d_lrcsval[(gridDim.x + blockIdx.x) * 3 + L] = ptr_target_lrcsval[L];
 
-			d_check_read[blockIdx.x] = true; 
+			d_check_read[blockIdx.x] = true;
 			d_check_read[gridDim.x + blockIdx.x] = true;
 			d_check_write[blockIdx.x] = false;
 			d_check_write[gridDim.x + blockIdx.x] = false;
@@ -956,7 +956,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 		}
 		__syncthreads();
 		// --------------------------------------------------------------------------------------------------------------
-		
+
 
 		num_partition = (gridDim.x * 2 % blockDim.x == 0) ? (gridDim.x * 2 / blockDim.x) : (gridDim.x * 2 / blockDim.x) + 1;
 		while (d_check_read[blockIdx.x] || d_check_read[gridDim.x + blockIdx.x]) {
@@ -974,7 +974,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 						else if (ptr_origin_objval[_mCAI] <= d_objval[idx * OBJECTIVE_NUM + _mCAI] &&
 							ptr_origin_objval[_mHD] <= d_objval[idx * OBJECTIVE_NUM + _mHD] &&
 							ptr_origin_objval[_MLRCS] >= d_objval[idx * OBJECTIVE_NUM + _MLRCS]
-							) 
+							)
 						{
 							d_check_write[blockIdx.x] = true;
 							break;
@@ -1005,7 +1005,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 					}
 				}
 			}
-			
+
 			//g.sync();
 			__syncthreads();
 			if (threadIdx.x == 0) {
@@ -1028,7 +1028,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_codons, const
 			//g.sync();
 			__syncthreads();
 		}
-		
+
 		num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
 		for (i = 0; i < num_partition; i++) {
 			idx = blockDim.x * i + threadIdx.x;
@@ -1263,35 +1263,12 @@ int main()
 	cudaMemcpy(d_codons_num, Codons_num, sizeof(Codons_num), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_codons_weight, Codons_weight, sizeof(Codons_weight), cudaMemcpyHostToDevice);
 
-	//int* d_len_amino_seq;
-	//int* d_cds_num;
-	//int* d_cycle;
-	//float* d_mprob;
-	//cudaMalloc((void**)&d_len_amino_seq, sizeof(int));
-	//cudaMalloc((void**)&d_cds_num, sizeof(int));
-	//cudaMalloc((void**)&d_cycle, sizeof(int));
-	//cudaMalloc((void**)&d_mprob, sizeof(float));
-	//cudaMemcpy(d_len_amino_seq, &len_amino_seq, sizeof(int), cudaMemcpyHostToDevice);
-	//cudaMemcpy(d_cds_num, &cds_num, sizeof(int), cudaMemcpyHostToDevice);
-	//cudaMemcpy(d_cycle, &cycle, sizeof(int), cudaMemcpyHostToDevice);
-	//cudaMemcpy(d_mprob, &mprob, sizeof(float), cudaMemcpyHostToDevice);
-
-	//cudaError_t err = cudaMalloc(NULL, 1024);
-	//
-	//void* args[] = { &genState, &d_codons, &d_codons_num, &d_codons_weight, &d_amino_seq_idx, &d_amino_startpos, &d_len_amino_seq, &d_cds_num, &d_cycle, &d_mprob
-	//			, &d_pop, &d_objval, &d_objidx, &d_lrcsval, &d_sorted_array, &d_check_read, &d_check_write };
-	///* optimize kerenl call */
-	//setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
-	//cudaEventRecord(d_start);
-	//err = cudaLaunchCooperativeKernel((void*)mainKernel, numBlocks, threadsPerBlock, args, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) + 
-	//	sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1), NULL);
-	//
-	//err = cudaGetLastError();
-	//if (err != cudaSuccess) {
-	//	printf("CUDA error: %s\n", cudaGetErrorString(err));
-	//	return EXIT_FAILURE;
-	//}
+	cudaError_t err = cudaMalloc(NULL, 1024);
 	
+	/* optimize kerenl call */
+	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
+	cudaEventRecord(d_start);
+
 	mainKernel << <numBlocks, threadsPerBlock,
 		sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
 		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1) >> >
@@ -1301,6 +1278,11 @@ int main()
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
 
+	err = cudaGetLastError();
+	if (err != cudaSuccess) {
+		printf("CUDA error: %s\n", cudaGetErrorString(err));
+		return EXIT_FAILURE;
+	}
 
 	printf("using shared memory size : %d\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2 + 61) +
 		sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 183 + 20 + 20 + 1));
@@ -1368,11 +1350,7 @@ int main()
 	cudaEventDestroy(d_start);
 	cudaEventDestroy(d_end);
 
-	//cudaFree(d_len_amino_seq);
-	//cudaFree(d_cds_num);
-	//cudaFree(d_cycle);
-	//cudaFree(d_mprob);
-	//cudaFree(&err);
+	cudaFree(&err);
 
 	/* free host memory */
 	free(amino_seq);

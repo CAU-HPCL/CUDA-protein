@@ -11,7 +11,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="tttttest.cu" />
+    <CudaCompile Include="tt.cu" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B9BCB5AC-E090-41CA-93C1-BC349808AE34}</ProjectGuid>
