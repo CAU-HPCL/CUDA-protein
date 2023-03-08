@@ -1131,19 +1131,39 @@ __global__ void SortSolution(char* d_pop, float* d_objval, int *d_sorted_array, 
 	return;
 }
 
-__global__ void NaiveSortSolution(float* d_objval,bool*d_check_read)
+__global__ void NaiveSortSolution(float* d_objval,int * d_sorted_array, bool*d_check_read)
 {
 	int i;
+	bool check;
 	d_check_read[threadIdx.x] = true;
 	if (threadIdx.x == 0)
 		sorting_idx = 0;
 	__syncthreads();
 
+	check = true;
 	while (sorting_idx < (blockDim.x / 2))
 	{
-		for (i = 0; i < blockDim.x; i++) {
-			if()
+		if (check) {
+			for (i = 0; i < blockDim.x; i++) {
+				if (d_check_read[i]) {
+					if (d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] >= d_objval[i * OBJECTIVE_NUM + _mCAI] &&
+						d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] >= d_objval[i * OBJECTIVE_NUM + _mHD] &&
+						d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] <= d_objval[i * OBJECTIVE_NUM + _MLRCS])
+						check = false;
+					else {
+						check = true;
+						break;
+					}
+				}
+			}
 		}
+		__syncthreads();
+		if (check == false)
+			d_check_read[threadIdx.x] = false;
+
+		while (atomicCAS(&lock, 0, 1) != 0);
+		d_sorted_array[sorting_idx++] = threadIdx.x;
+		atomicExch(&lock, 0);
 	}
 
 	return;
@@ -1370,14 +1390,16 @@ int main()
 	printf("main kernel time : %f seconds\n", kernel_time / 1000.f);
 
 
+	NaiveSortSolution << <1, pop_size * 2 >> > (d_objval, d_sorted_array, d_check_read);
 
 
-	int numBlocksPerSm = 0;
-	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SortSolution, numBlocks * 2, sizeof(bool)))
-	printf("numBlockPerSm : %d\n", numBlocksPerSm);
+
+	//int numBlocksPerSm = 0;
+	//CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SortSolution, numBlocks * 2, sizeof(bool)))
+	//printf("numBlockPerSm : %d\n", numBlocksPerSm);
 	/* check sorting */
-	void* args[] = { &d_pop, &d_objval, &d_sorted_array, &d_check_read, &d_check_write };
-	CHECK_CUDA(cudaLaunchCooperativeKernel((void*)SortSolution, numBlocks * 2, numBlocks * 2, args, sizeof(bool)))
+	//void* args[] = { &d_pop, &d_objval, &d_sorted_array, &d_check_read, &d_check_write };
+	//CHECK_CUDA(cudaLaunchCooperativeKernel((void*)SortSolution, numBlocks * 2, numBlocks * 2, args, sizeof(bool)))
 
 
 
