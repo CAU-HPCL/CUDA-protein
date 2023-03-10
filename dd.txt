@@ -1,2 +1,2 @@
 >sp|Q91X51|GORS1_MOUSE Golgi reassembly-stacking protein 1 OS=Mus musculus OX=10090 GN=Gorasp1 PE=1 SV=3
-AAAA
+ACDEF
