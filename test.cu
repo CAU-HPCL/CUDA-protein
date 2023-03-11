@@ -1351,7 +1351,7 @@ int main()
 	char* d_objidx;
 	int* d_lrcsval;
 	int* d_sorted_array;
-	int* d_F_set, * d_Sp_set, d_Q_set, d_np;
+	int* d_F_set, * d_Sp_set, *d_Q_set, *d_np;
 	curandStateXORWOW* genState;
 
 	cudaEvent_t d_start, d_end;
@@ -1487,7 +1487,7 @@ int main()
 
 	/* For check sorting */
 	int numBlocksPerSm = 0;
-	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
+	//CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
 	printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
 	void* args[] = {&d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_Q_set, &d_np};
 	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
