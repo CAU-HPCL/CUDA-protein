@@ -9,7 +9,9 @@
 #include <device_launch_parameters.h>
 #include <curand_kernel.h>
 #include <cuda.h>
-//#include <cooperative_groups.h>
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
@@ -143,9 +145,7 @@ __constant__ int c_len_amino_seq;
 __constant__ int c_cds_num;
 __constant__ float c_mprob;
 
-
 __device__ int lock = 0;
-//__device__ int sorting_idx = 0;
 
 
 __device__ char FindNum_C(const char* origin, const char* target, const char num_codons)
@@ -239,6 +239,11 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 	return;
 }
 
+/*
+Afeter complete GenSolution in global memory
+d_sorted_array = 0, 1, .. n - 1
+and solution, etc...
+*/
 __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_idx, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval,int *d_sorted_array)
 {
 	curandStateXORWOW localState;
@@ -275,8 +280,6 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	s_sol_objidx = (char*)&s_sol[len_sol];
 
 
-
-	/* copy from global memory to shared memory */
 	num_partition = (c_len_amino_seq % blockDim.x == 0) ? c_len_amino_seq / blockDim.x : c_len_amino_seq / blockDim.x + 1;
 	for (i = 0; i < num_partition; i++) {
 		idx = blockDim.x * i + threadIdx.x;
@@ -285,6 +288,8 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 		}
 	}
 	__syncthreads();
+	// --------------------------------------------------------------------------------------
+
 
 	/* initialize solution */
 	if (blockIdx.x == gridDim.x - 1)
@@ -589,6 +594,181 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	return;
 }
 
+#if 0
+/* 
+Based on sorting methods on NSGA2 paper
+If we input number of threads and sorting function into cudaOccupancyMaxActiveBlocksPerMultiprocessor(), we get number of blocks available to use
+*/
+__global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, int* F_set, int* Sp_set, int * Q_set, int* np)
+{
+	int i, j;
+	int p;
+	int Sp_idx;
+	int pop_size;
+	float tmp;
+	float crw_dist;
+	int p_len;
+
+	pop_size = blockDim.x;
+	
+	// shared memory
+	extern __shared__ int smem[];
+	__shared__ int* np;
+	__shared__ int* Q_set;
+	__shared__ int* F_idx;
+	__shared__ int* F_front;
+	__shared__ int* Q_idx;
+	__shared__ float* obj_compute;
+
+	np = smem;
+	Q_set = (int*)&np[pop_size];
+	F_idx = (int*)&Q_set[pop_size];
+	F_front = (int*)&F_idx[1];
+	Q_idx = (int*)&F_front[1];
+	obj_compute = (float*)Q_idx[1];
+
+	// Setting empty
+	for (i = 0; i < pop_size; i++) {
+		F_set[pop_size * threadIdx.x + i] = EMPTY;
+		Sp_set[pop_size * threadIdx.x + i] = EMPTY;
+	}
+	np[threadIdx.x] = 0;
+	
+	// 1st front setting
+	if (threadIdx.x == 0) 
+		*F_idx = 0;
+	__syncthreads();
+	Sp_idx = 0;
+	for (i = 0; i < pop_size; i++)
+	{
+		if (i != threadIdx.x) 
+		{
+			if (ParetoComparison(&d_objval[threadIdx.x * OBJECTIVE_NUM], &d_objval[i * OBJECTIVE_NUM]))
+			{
+				Sp_set[threadIdx.x * pop_size + Sp_idx++] = i;
+			}
+			else if (ParetoComparison(&d_objval[i * OBJECTIVE_NUM], &d_objval[threadIdx.x * OBJECTIVE_NUM]))
+			{
+				np[threadIdx.x] += 1;
+			}
+		}
+	}
+	__syncthreads();
+	if (np[threadIdx.x] == 0)
+	{
+		while (atomicCAS(&lock, 0, 1) != 0);
+		F_set[*F_idx] = threadIdx.x;
+		*F_idx += 1;
+		atomicExch(&lock, 0);
+	}
+	__syncthreads();
+	// end of 1st front setting
+
+
+	// non-dominated sorting
+	if (threadIdx.x == 0) {
+		*F_front = 0;
+	}
+	__syncthreads();
+	while (F_set[*F_front * pop_size] != EMPTY)
+	{
+		Q_set[threadIdx.x] = EMPTY;
+		if (threadIdx.x == 0)
+			*Q_idx = 0;
+		__syncthreads();
+
+		if (F_set[*F_front * pop_size + threadIdx.x] != EMPTY)
+		{
+			p = F_set[*F_front * pop_size + threadIdx.x];
+			for (Sp_idx = 0; Sp_idx < pop_size && Sp_set[p * pop_size + Sp_idx] != EMPTY; Sp_idx++)
+			{
+				while (atomicCAS(&lock, 0, 1) != 0);
+				np[Sp_set[p * pop_size + Sp_idx]] -= 1;
+				if (np[Sp_set[p * pop_size + Sp_idx]] == 0)
+				{
+					// rank ++
+					Q_set[*Q_idx] = Sp_set[p * pop_size + Sp_idx];
+					*Q_idx += 1;
+				}
+				atomicExch(&lock, 0);
+			}
+		}
+		__syncthreads();
+
+		if (threadIdx.x == 0)
+			*F_front += 1;
+		__syncthreads();
+		if (*F_front == pop_size)
+			break;
+		if (threadIdx.x == 0)
+		{
+			*Q_idx = 0;
+			while (*Q_idx < pop_size && Q_set[*Q_idx] != EMPTY)
+			{
+				F_set[*F_front * pop_size + *Q_idx] = Q_set[*Q_idx];
+				*Q_idx += 1;
+			}
+		}
+		__syncthreads();
+		if (*Q_idx >= pop_size)
+			break;
+	}
+	// end of non-dominated sorting
+
+
+	// crowding distance 
+	if (threadIdx.x == 0)
+		*F_front = 0;
+	__syncthreads();
+	while (F_set[*F_front * pop_size] != EMPTY)
+	{
+
+		if (F_set[*F_front * pop_size + threadIdx.x] != EMPTY)
+		{
+			crw_dist = 0;
+			for (i = 0; i < OBJECTIVE_NUM; i++) {
+				obj_compute[threadIdx.x] = d_objval[F_set[*F_front * pop_size + threadIdx.x] * OBJECTIVE_NUM + i];
+			}
+		}
+		__syncthreads();
+
+	}
+
+
+	// write d_sorted_array
+	if (threadIdx.x == 0)
+	{
+		*F_front = 0;
+		i = 0;
+		j = 0;
+		
+		while (F_set[*F_front * pop_size] != EMPTY)
+		{
+			d_sorted_array[j] = F_set[*F_front * pop_size + i];
+			j++;
+			i++;
+			
+			if (j == pop_size)
+				break;
+			
+			if (F_set[*F_front * pop_size + i] == EMPTY) {
+				*F_front += 1;
+				i = 0;
+			}
+		}
+
+	}
+
+	return;
+}
+#endif
+
+/*
+copy solution from global memory based on sorted array
+Not update solution to global memory state of sorted Just write solution to global memory
+This means In global memory solution is not sorted after this function
+If you want soltion is sorted sorted function call and we get sorted array and update solution based on sorted array
+*/
 __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval, const int cycle, const int *d_sorted_array)
 {
 	curandStateXORWOW localState;
@@ -665,7 +845,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 	// -----------------------------------------------------------------------------------------
 
 
-	/* copy solution from global memory to shared memory */
+	/* copy solution from global memory to shared memory based on sorted array index */
 	num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
 	for (i = 0; i < num_partition; i++) {
 		idx = blockDim.x * i + threadIdx.x;
@@ -1097,280 +1277,6 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 	return;
 }
 
-#if 0
-__global__ void SortSolution(char* d_pop, float* d_objval, int* d_sorted_array, bool* d_check_read, bool* d_check_write)
-{
-	cooperative_groups::grid_group g = cooperative_groups::this_grid();
-
-	__shared__ bool check;
-
-	/* number of solution which have to be sorted is equal to gridDim.x & blockDim.x */
-	/*
-		blocIdx.x	>>>>	my solution
-		threadIdx.x		>>>		counterpart solution
-	*/
-
-	if (threadIdx.x == 0) {
-		check = true;
-		d_check_read[blockIdx.x] = true;
-		d_check_write[blockIdx.x] = false;
-		if (blockIdx.x == 0)
-			sorting_idx = 0;
-	}
-	g.sync();
-
-
-	while (sorting_idx < (gridDim.x / 2)) {
-		if (d_check_read[blockIdx.x]) {
-			if (blockIdx.x != threadIdx.x && d_check_read[threadIdx.x])
-			{
-				if (d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI] < d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] &&
-					d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD] <= d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] &&
-					d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] >= d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS]
-					)
-					d_check_write[blockIdx.x] = true;
-				else if (d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI] <= d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] &&
-					d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD] < d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] &&
-					d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] >= d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS]
-					)
-					d_check_write[blockIdx.x] = true;
-				else if (d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI] <= d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] &&
-					d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD] <= d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] &&
-					d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS] > d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS]
-					)
-					d_check_write[blockIdx.x] = true;
-			}
-		}
-		g.sync();
-
-		if (threadIdx.x == 0) {
-			if (d_check_write[blockIdx.x] == false && check) {
-				while (atomicCAS(&lock, 0, 1) != 0);
-				d_sorted_array[sorting_idx++] = blockIdx.x;
-				atomicExch(&lock, 0);
-				d_check_read[blockIdx.x] = d_check_write[blockIdx.x];
-				check = false;
-			}
-
-			d_check_write[blockDim.x] = false;
-		}
-		g.sync();
-	}
-
-	return;
-}
-
-/* using one block and number of threads which are size of population */
-__global__ void NaiveSortSolution(float* d_objval, int* d_sorted_array, bool* d_check_read)
-{
-	int i;
-	int cnt;
-	bool check;
-
-	d_check_read[threadIdx.x] = true;
-	if (threadIdx.x == 0)
-		sorting_idx = 0;
-	__syncthreads();
-
-	check = true;			// my solution check
-	cnt = 0;
-	while (sorting_idx < (blockDim.x / 2))
-	{
-		if (check) {
-			for (i = 0; i < blockDim.x; i++) {
-				if (d_check_read[i] && i != threadIdx.x) {
-					if (d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] <= d_objval[i * OBJECTIVE_NUM + _mCAI] &&
-						d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] <= d_objval[i * OBJECTIVE_NUM + _mHD] &&
-						d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] >= d_objval[i * OBJECTIVE_NUM + _MLRCS])
-					{
-						check = true;
-						break;
-					}
-					else
-						check = false;
-				}
-			}
-		}
-		__syncthreads();
-		
-		if (check == false && cnt == 0) {
-			d_check_read[threadIdx.x] = false;
-			while (atomicCAS(&lock, 0, 1) != 0);
-			d_sorted_array[sorting_idx++] = threadIdx.x;
-			atomicExch(&lock, 0);
-			cnt = 1;
-			printf("tid : %d \n", threadIdx.x);
-		}
-		__syncthreads();
-	}
-
-	return;
-}
-#endif
-
-
-__global__ void FastSortSolution(float* d_objval, int* d_sorted_array, int* F_set, int* Sp_set)
-{
-	int i, j;
-	int p;
-	int Sp_idx;
-	int pop_size;
-	float tmp;
-	float crw_dist;
-	int p_len;
-
-	pop_size = blockDim.x;
-	
-	// shared memory
-	extern __shared__ int smem[];
-	__shared__ int* np;
-	__shared__ int* Q_set;
-	__shared__ int* F_idx;
-	__shared__ int* F_front;
-	__shared__ int* Q_idx;
-	__shared__ float* obj_compute;
-
-	np = smem;
-	Q_set = (int*)&np[pop_size];
-	F_idx = (int*)&Q_set[pop_size];
-	F_front = (int*)&F_idx[1];
-	Q_idx = (int*)&F_front[1];
-	obj_compute = (float*)Q_idx[1];
-
-	// Setting empty
-	for (i = 0; i < pop_size; i++) {
-		F_set[pop_size * threadIdx.x + i] = EMPTY;
-		Sp_set[pop_size * threadIdx.x + i] = EMPTY;
-	}
-	np[threadIdx.x] = 0;
-	
-	// 1st front setting
-	if (threadIdx.x == 0) 
-		*F_idx = 0;
-	__syncthreads();
-	Sp_idx = 0;
-	for (i = 0; i < pop_size; i++)
-	{
-		if (i != threadIdx.x) 
-		{
-			if (ParetoComparison(&d_objval[threadIdx.x * OBJECTIVE_NUM], &d_objval[i * OBJECTIVE_NUM]))
-			{
-				Sp_set[threadIdx.x * pop_size + Sp_idx++] = i;
-			}
-			else if (ParetoComparison(&d_objval[i * OBJECTIVE_NUM], &d_objval[threadIdx.x * OBJECTIVE_NUM]))
-			{
-				np[threadIdx.x] += 1;
-			}
-		}
-	}
-	__syncthreads();
-	if (np[threadIdx.x] == 0)
-	{
-		while (atomicCAS(&lock, 0, 1) != 0);
-		F_set[*F_idx] = threadIdx.x;
-		*F_idx += 1;
-		atomicExch(&lock, 0);
-	}
-	__syncthreads();
-	// end of 1st front setting
-
-
-	// non-dominated sorting
-	if (threadIdx.x == 0) {
-		*F_front = 0;
-	}
-	__syncthreads();
-	while (F_set[*F_front * pop_size] != EMPTY)
-	{
-		Q_set[threadIdx.x] = EMPTY;
-		if (threadIdx.x == 0)
-			*Q_idx = 0;
-		__syncthreads();
-
-		if (F_set[*F_front * pop_size + threadIdx.x] != EMPTY)
-		{
-			p = F_set[*F_front * pop_size + threadIdx.x];
-			for (Sp_idx = 0; Sp_idx < pop_size && Sp_set[p * pop_size + Sp_idx] != EMPTY; Sp_idx++)
-			{
-				while (atomicCAS(&lock, 0, 1) != 0);
-				np[Sp_set[p * pop_size + Sp_idx]] -= 1;
-				if (np[Sp_set[p * pop_size + Sp_idx]] == 0)
-				{
-					// rank ++
-					Q_set[*Q_idx] = Sp_set[p * pop_size + Sp_idx];
-					*Q_idx += 1;
-				}
-				atomicExch(&lock, 0);
-			}
-		}
-		__syncthreads();
-
-		if (threadIdx.x == 0)
-			*F_front += 1;
-		__syncthreads();
-		if (*F_front == pop_size)
-			break;
-		if (threadIdx.x == 0)
-		{
-			*Q_idx = 0;
-			while (*Q_idx < pop_size && Q_set[*Q_idx] != EMPTY)
-			{
-				F_set[*F_front * pop_size + *Q_idx] = Q_set[*Q_idx];
-				*Q_idx += 1;
-			}
-		}
-		__syncthreads();
-		if (*Q_idx >= pop_size)
-			break;
-	}
-	// end of non-dominated sorting
-
-
-	// crowding distance 
-	if (threadIdx.x == 0)
-		*F_front = 0;
-	__syncthreads();
-	while (F_set[*F_front * pop_size] != EMPTY)
-	{
-
-		if (F_set[*F_front * pop_size + threadIdx.x] != EMPTY)
-		{
-			crw_dist = 0;
-			for (i = 0; i < OBJECTIVE_NUM; i++) {
-				obj_compute[threadIdx.x] = d_objval[F_set[*F_front * pop_size + threadIdx.x] * OBJECTIVE_NUM + i];
-			}
-		}
-		__syncthreads();
-
-	}
-
-
-	// write d_sorted_array
-	if (threadIdx.x == 0)
-	{
-		*F_front = 0;
-		i = 0;
-		j = 0;
-		
-		while (F_set[*F_front * pop_size] != EMPTY)
-		{
-			d_sorted_array[j] = F_set[*F_front * pop_size + i];
-			j++;
-			i++;
-			
-			if (j == pop_size)
-				break;
-			
-			if (F_set[*F_front * pop_size + i] == EMPTY) {
-				*F_front += 1;
-				i = 0;
-			}
-		}
-
-	}
-
-	return;
-}
 
 
 int main()
@@ -1420,6 +1326,7 @@ int main()
 	float* h_objval;						// store objective values of population (solution 1, solution 2 .... solution n)
 	char* h_objidx;
 	int* h_lrcsval;
+	int* h_sorted_array;					// for check sorting in GPU
 	int len_amino_seq, len_cds, len_sol;
 	int pop_size;
 	int total_cycle;
@@ -1444,7 +1351,7 @@ int main()
 	char* d_objidx;
 	int* d_lrcsval;
 	int* d_sorted_array;
-	int* d_F_set, * d_Sp_set;
+	int* d_F_set, * d_Sp_set, d_Q_set, d_np;
 	curandStateXORWOW* genState;
 
 	cudaEvent_t d_start, d_end;
@@ -1536,6 +1443,7 @@ int main()
 	h_objval = (float*)malloc(sizeof(float) * pop_size * OBJECTIVE_NUM * 2);
 	h_objidx = (char*)malloc(sizeof(char) * pop_size * OBJECTIVE_NUM * 2 * 2);
 	h_lrcsval = (int*)malloc(sizeof(int) * pop_size * 3 * 2);
+	h_sorted_array = (int*)malloc(sizeof(int) * pop_size * 2);
 
 
 	/* device memory allocation */
@@ -1548,9 +1456,9 @@ int main()
 	CHECK_CUDA(cudaMalloc((void**)&d_sorted_array, sizeof(int) * numBlocks * 2))
 	CHECK_CUDA(cudaMalloc((void**)&d_F_set, sizeof(int) * numBlocks * 2 * numBlocks * 2))
 	CHECK_CUDA(cudaMalloc((void**)&d_Sp_set, sizeof(int) * numBlocks * 2 * numBlocks * 2))
+	CHECK_CUDA(cudaMalloc((void**)&d_Q_set, sizeof(int) * numBlocks * 2))
+	CHECK_CUDA(cudaMalloc((void**)&d_np, sizeof(int) * numBlocks * 2))
 
-	//CHECK_CUDA(cudaMalloc((void**)&d_check_read, sizeof(bool) * numBlocks * 2))
-	//CHECK_CUDA(cudaMalloc((void**)&d_check_write, sizeof(bool) * numBlocks * 2))
 
 
 	/* memory copy host to device */
@@ -1573,8 +1481,15 @@ int main()
 	CHECK_CUDA(cudaEventRecord(d_end))
 	CHECK_CUDA(cudaEventSynchronize(d_end))
 	CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-	printf("\nSolution generating kerenl time : %f seconds\n", kernel_time / 1000.f);
+	printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
 
+
+
+	/* For check sorting */
+	int numBlocksPerSm = 0;
+	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
+	printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
+	void* args[] = {&d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_Q_set, &d_np};
 	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
 	for (i = 0; i < k; i++)
@@ -1588,22 +1503,16 @@ int main()
 				(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, d_sorted_array);
 		}
 		
-		FastSortSolution << <1, pop_size * 2, sizeof(int) * (pop_size * 2 * 2 + 3) + sizeof(float) * (pop_size * 2) >> > (d_objval, d_sorted_array, d_F_set, d_Sp_set);
+		//	sorting
+		//CHECK_CUDA(cudaLaunchCooperativeKernel((void*)FastSortSolution, numBlocksPerSm, threadsPerBlock, args, 0))
 	}
 	CHECK_CUDA(cudaEventRecord(d_end))
 	CHECK_CUDA(cudaEventSynchronize(d_end))
 	CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-	printf("(main kernel + sort kernel) time : %f seconds\n", kernel_time / 1000.f);
-	printf("using shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
+	printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
+	//printf("using shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
 	printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
 
-	//NaiveSortSolution << <1, pop_size * 2 >> > (d_objval, d_sorted_array, d_check_read);
-	//int numBlocksPerSm = 0;
-	//CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, SortSolution, numBlocks * 2, sizeof(bool)))
-	//printf("numBlockPerSm : %d\n", numBlocksPerSm);
-	/* check sorting */
-	//void* args[] = { &d_pop, &d_objval, &d_sorted_array, &d_check_read, &d_check_write };
-	//CHECK_CUDA(cudaLaunchCooperativeKernel((void*)SortSolution, numBlocks * 2, numBlocks * 2, args, sizeof(bool)))
 
 
 
@@ -1612,16 +1521,21 @@ int main()
 	CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost))
 	CHECK_CUDA(cudaMemcpy(h_objidx, d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2, cudaMemcpyDeviceToHost))
 	CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int) * numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
+	CHECK_CUDA(cudaMemcpy(h_sorted_array, d_sorted_array, sizeof(int) * numBlocks * 2, cudaMemcpyDeviceToHost))
 
 
 	// print minimum distance to ideal point
-	//min_dist = MinEuclid(h_objval, pop_size);
-	//printf("minimum distance to the ideal point : %f\n", min_dist);
+	min_dist = MinEuclid(h_objval, pop_size * 2);
+	printf("minimum distance to the ideal point : %f\n", min_dist);
 	//printf("lowest mcai value : %f\n", lowest_mcai);
 
+	printf("\nSorted array index : \n");
+	for (i = 0; i < pop_size * 2; i++) {
+		printf("%d ", h_sorted_array[i]);
+	}
 
 	/* print solution */
-	//for (i = 0; i < pop_size; i++)
+	//for (i = 0; i < pop_size * 2; i++)
 	//{
 	//	printf("%d solution\n", i + 1);
 	//	for (j = 0; j < cds_num; j++) {
@@ -1667,6 +1581,8 @@ int main()
 	CHECK_CUDA(cudaFree(d_sorted_array))
 	CHECK_CUDA(cudaFree(d_F_set))
 	CHECK_CUDA(cudaFree(d_Sp_set))
+	CHECK_CUDA(cudaFree(d_Q_set))
+	CHECK_CUDA(cudaFree(d_np))
 	CHECK_CUDA(cudaEventDestroy(d_start))
 	CHECK_CUDA(cudaEventDestroy(d_end))
 
@@ -1678,6 +1594,7 @@ int main()
 	free(h_objval);
 	free(h_objidx);
 	free(h_lrcsval);
+	free(h_sorted_array);
 
 
 	return EXIT_SUCCESS;
