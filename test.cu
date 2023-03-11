@@ -11,7 +11,6 @@
 #include <cuda.h>
 #include <cooperative_groups.h>
 
-namespace cg = cooperative_groups;
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
@@ -238,6 +237,7 @@ __global__ void setup_kernel(curandStateXORWOW* state, int seed)
 
 	return;
 }
+
 
 /*
 Afeter complete GenSolution in global memory
@@ -594,27 +594,25 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	return;
 }
 
-#if 0
+
 /* 
 Based on sorting methods on NSGA2 paper
 If we input number of threads and sorting function into cudaOccupancyMaxActiveBlocksPerMultiprocessor(), we get number of blocks available to use
 */
-__global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, int* F_set, int* Sp_set, int * Q_set, int* np)
+__global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, int* F_set, int* Sp_set, int * Q_set, int* np, const int pop_size)
 {
+	cooperative_groups::grid_group grid = cooperative_groups::this_grid();
+	grid.sync();
+
 	int i, j;
 	int p;
 	int Sp_idx;
-	int pop_size;
 	float tmp;
 	float crw_dist;
 	int p_len;
 
-	pop_size = blockDim.x;
 	
-	// shared memory
 	extern __shared__ int smem[];
-	__shared__ int* np;
-	__shared__ int* Q_set;
 	__shared__ int* F_idx;
 	__shared__ int* F_front;
 	__shared__ int* Q_idx;
@@ -761,7 +759,7 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, int
 
 	return;
 }
-#endif
+
 
 /*
 copy solution from global memory based on sorted array
@@ -1487,7 +1485,7 @@ int main()
 
 	/* For check sorting */
 	int numBlocksPerSm = 0;
-	//CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
+	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
 	printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
 	void* args[] = {&d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_Q_set, &d_np};
 	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
@@ -1530,7 +1528,7 @@ int main()
 	//printf("lowest mcai value : %f\n", lowest_mcai);
 
 	printf("\nSorted array index : \n");
-	for (i = 0; i < pop_size * 2; i++) {
+	for (i = 0; i < pop_size; i++) {
 		printf("%d ", h_sorted_array[i]);
 	}
 
@@ -1549,6 +1547,7 @@ int main()
 	//}
 
 	/* print objective value */
+	printf("\n\n");
 	for (i = 0; i < pop_size * 2; i++)
 	{
 		printf("%d solution\n", i + 1);
