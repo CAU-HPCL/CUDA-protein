@@ -667,9 +667,9 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 		}
 		__syncthreads();
 
-		if (threadIdx.x == 0 && np[idx_1] == 0)
+		if (idx_1 < c_sort_popsize && threadIdx.x == 0 && np[idx_1] == 0)
 		{
-			F_set[front * c_sort_popsize + idx_1] = true;
+			F_set[idx_1] = true;
 			while (atomicCAS(&lock, 0, 1) != 0);
 			d_sorted_array[count] = idx_1;
 			count += 1;
@@ -680,6 +680,7 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 	// need to count check
 	//if (count > (c_sort_popsize / 2))
 	//	return;
+	
 	if (blockIdx.x == 0 && threadIdx.x == 0)
 		front += 1;
 	grid.sync();
