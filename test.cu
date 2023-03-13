@@ -149,7 +149,7 @@ __constant__ int c_sort_popsize;
 __device__ int lock = 0;
 __device__ int front = 0;
 __device__ int count = 0;
-
+__device__ int g_idx = 0;
 
 __device__ char FindNum_C(const char* origin, const char* target, const char num_codons)
 {
@@ -599,21 +599,44 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 }
 
 
+typedef struct {
+	int sol_idx;
+	float corwding_dist;
+	float obj_val[OBJECTIVE_NUM];
+}Sol;
+
+__host__ __device__ void Sol_assign(Sol* s1, Sol* s2)
+{
+	int i;
+
+	s1->corwding_dist = s2->corwding_dist;
+	s1->sol_idx = s2->sol_idx;
+	for (i = 0; i < OBJECTIVE_NUM; i++)
+	{
+		s1->obj_val[i] = s2->obj_val[i];
+	}
+
+	return;
+}
 /* 
 Based on sorting methods on NSGA2 paper
 If we input number of threads and sorting function into cudaOccupancyMaxActiveBlocksPerMultiprocessor(), we get number of blocks available to use
 */
-__global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, bool* F_set, bool* Sp_set, int* np, int* rank_count)
+__global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, bool* F_set, bool* Sp_set, int* np, int* rank_count, Sol* sol_struct)
 {
 	cooperative_groups::grid_group grid = cooperative_groups::this_grid();
 	int i, j, c;
 	int idx_1, idx_2;
 	int block_partition, thread_partition;
-	
+	int crw_partition;
+	int crw_idx;
+	Sol tmp;
+
 	if (blockIdx.x == 0 && threadIdx.x == 0)
 	{
 		front = 0;
 		count = 0;
+		g_idx = 0;
 	}
 
 	block_partition = (c_sort_popsize % gridDim.x == 0) ? (c_sort_popsize / gridDim.x) : (c_sort_popsize / gridDim.x + 1);
@@ -677,10 +700,66 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 			atomicExch(&lock, 0);
 		}
 	}
-	// need to count check
-	//if (count > (c_sort_popsize / 2))
-	//	return;
-	
+
+	// crowding distance sort
+	if (count > (c_sort_popsize / 2)) 
+	{
+		for (i = 0; i < block_partition; i++){
+			idx_1 = gridDim.x * i + blockIdx.x;
+			if (threadIdx.x == 0 && idx_1 < c_sort_popsize && F_set[front * c_sort_popsize + idx_1]) {
+				while (atomicCAS(&lock, 0, 1) != 0);
+				sol_struct[g_idx].sol_idx = idx_1;
+				sol_struct[g_idx].corwding_dist = 0;
+				sol_struct[g_idx].obj_val[_mCAI] = d_objval[idx_1 * OBJECTIVE_NUM + _mCAI];
+				sol_struct[g_idx].obj_val[_mHD] = d_objval[idx_1 * OBJECTIVE_NUM + _mHD] / IDEAL_MHD;
+				sol_struct[g_idx].obj_val[_MLRCS] = d_objval[idx_1 * OBJECTIVE_NUM + _MLRCS];
+				g_idx += 1;
+				atomicExch(&lock, 0);
+			}
+		}
+	}
+	grid.sync();
+	for (i = 0; i < OBJECTIVE_NUM; i++)
+	{
+		if (blockIdx.x == 0 && threadIdx.x == 0) {
+			for (j = 0; j < rank_count[front]; j++) {
+				for (c = 0; c < rank_count[front] - 1 - j; c++) {
+					if (sol_struct[c].obj_val[i] > sol_struct[c + 1].obj_val[i]) {
+						Sol_assign(&tmp, &sol_struct[c]);
+						Sol_assign(&sol_struct[c], &sol_struct[c + 1]);
+						Sol_assign(&sol_struct[c + 1], &tmp);
+					}
+				}
+			}
+
+			sol_struct[0].corwding_dist = 10000;
+			sol_struct[rank_count[front] - 1].corwding_dist = 10000;
+
+			for (j = 1; j < rank_count[front] - 1; j++)
+				sol_struct[j].corwding_dist += sol_struct[j + 1].obj_val[i] - sol_struct[j - 1].obj_val[i];
+		}
+	}
+	if (blockIdx.x == 0 && threadIdx.x == 0) {
+		for (i = 0; i < rank_count[front]; i++) {
+			for (j = 0; j < rank_count[front] - 1 - i; j++) {
+				if (sol_struct[j].corwding_dist < sol_struct[j + 1].corwding_dist) {
+					Sol_assign(&tmp, &sol_struct[j]);
+					Sol_assign(&sol_struct[j], &sol_struct[j + 1]);
+					Sol_assign(&sol_struct[j + 1], &tmp);
+				}
+			}
+		}
+	}
+	grid.sync();
+	crw_partition = rank_count[front] % gridDim.x == 0 ? rank_count[front] / gridDim.x : rank_count[front] / gridDim.x + 1;
+	for (i = 0; i < crw_partition; i++) {
+		crw_idx = gridDim.x * i + blockIdx.x;
+		if (threadIdx.x == 0 && crw_idx < rank_count[front])
+			F_set[front * c_sort_popsize + crw_idx] = sol_struct[crw_idx].sol_idx;
+	}
+
+	return;
+
 	if (blockIdx.x == 0 && threadIdx.x == 0)
 		front += 1;
 	grid.sync();
@@ -718,7 +797,58 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 		grid.sync();
 	}
 
+	for (i = 0; i < block_partition; i++) {
+		idx_1 = gridDim.x * i + blockIdx.x;
+		if (threadIdx.x == 0 && idx_1 < c_sort_popsize && F_set[front * c_sort_popsize + idx_1]) {
+			while (atomicCAS(&lock, 0, 1) != 0);
+			sol_struct[g_idx].sol_idx = idx_1;
+			sol_struct[g_idx].corwding_dist = 0;
+			sol_struct[g_idx].obj_val[_mCAI] = d_objval[idx_1 * OBJECTIVE_NUM + _mCAI];
+			sol_struct[g_idx].obj_val[_mHD] = d_objval[idx_1 * OBJECTIVE_NUM + _mHD] / IDEAL_MHD;
+			sol_struct[g_idx].obj_val[_MLRCS] = d_objval[idx_1 * OBJECTIVE_NUM + _MLRCS];
+			g_idx += 1;
+			atomicExch(&lock, 0);
+		}
+	}
+	grid.sync();
+	for (i = 0; i < OBJECTIVE_NUM; i++)
+	{
+		if (blockIdx.x == 0 && threadIdx.x == 0) {
+			for (j = 0; j < rank_count[front]; j++) {
+				for (c = 0; c < rank_count[front] - 1 - j; c++) {
+					if (sol_struct[c].obj_val[i] > sol_struct[c + 1].obj_val[i]) {
+						Sol_assign(&tmp, &sol_struct[c]);
+						Sol_assign(&sol_struct[c], &sol_struct[c + 1]);
+						Sol_assign(&sol_struct[c + 1], &tmp);
+					}
+				}
+			}
 
+			sol_struct[0].corwding_dist = 10000;
+			sol_struct[rank_count[front] - 1].corwding_dist = 10000;
+
+			for (j = 1; j < rank_count[front] - 1; j++)
+				sol_struct[j].corwding_dist += sol_struct[j + 1].obj_val[i] - sol_struct[j - 1].obj_val[i];
+		}
+	}
+	if (blockIdx.x == 0 && threadIdx.x == 0) {
+		for (i = 0; i < rank_count[front]; i++) {
+			for (j = 0; j < rank_count[front] - 1 - i; j++) {
+				if (sol_struct[j].corwding_dist < sol_struct[j + 1].corwding_dist) {
+					Sol_assign(&tmp, &sol_struct[j]);
+					Sol_assign(&sol_struct[j], &sol_struct[j + 1]);
+					Sol_assign(&sol_struct[j + 1], &tmp);
+				}
+			}
+		}
+	}
+	grid.sync();
+	crw_partition = rank_count[front] % gridDim.x == 0 ? rank_count[front] / gridDim.x : rank_count[front] / gridDim.x + 1;
+	for (i = 0; i < crw_partition; i++) {
+		crw_idx = gridDim.x * i + blockIdx.x;
+		if (threadIdx.x == 0 && crw_idx < rank_count[front])
+			F_set[front * c_sort_popsize + crw_idx] = sol_struct[crw_idx].sol_idx;
+	}
 
 	/* -------------------- update d_sorted array -------------------- */
 	
@@ -1318,6 +1448,7 @@ int main()
 	int* d_sorted_array;
 	bool* d_F_set, * d_Sp_set;
 	int	*d_np, *d_rank_count;
+	Sol* d_sol_struct;
 	curandStateXORWOW* genState;
 
 	cudaEvent_t d_start, d_end;
@@ -1425,6 +1556,7 @@ int main()
 	CHECK_CUDA(cudaMalloc((void**)&d_Sp_set, sizeof(bool) * numBlocks * 2 * numBlocks * 2))
 	CHECK_CUDA(cudaMalloc((void**)&d_rank_count, sizeof(int) * numBlocks * 2))
 	CHECK_CUDA(cudaMalloc((void**)&d_np, sizeof(int) * numBlocks * 2))
+	CHECK_CUDA(cudaMalloc((void**)&d_sol_struct, sizeof(Sol) * numBlocks * 2))
 
 
 
@@ -1457,7 +1589,7 @@ int main()
 	int numBlocksPerSm = 0;
 	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
 	printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
-	void* args[] = {&d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_np, &d_rank_count};
+	void* args[] = {&d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_np, &d_rank_count, &d_sol_struct};
 	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
 	for (i = 0; i < k; i++)
@@ -1551,6 +1683,7 @@ int main()
 	CHECK_CUDA(cudaFree(d_Sp_set))
 	CHECK_CUDA(cudaFree(d_rank_count))
 	CHECK_CUDA(cudaFree(d_np))
+	CHECK_CUDA(cudaFree(d_sol_struct))
 	CHECK_CUDA(cudaEventDestroy(d_start))
 	CHECK_CUDA(cudaEventDestroy(d_end))
 
