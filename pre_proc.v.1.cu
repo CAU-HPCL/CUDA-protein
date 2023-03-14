@@ -43,7 +43,7 @@
 #define SECOND_SOL 2
 
 #define IDEAL_MCAI 1
-#define IDEAL_MHD 0.4f
+#define IDEAL_MHD 1
 #define IDEAL_MLRCS 0
 #define EUCLID(val1, val2, val3) (float)sqrt(pow(IDEAL_MCAI - val1, 2) + pow(IDEAL_MHD - val2, 2) + pow(val3, 2))
 
@@ -1304,6 +1304,13 @@ int main()
 	CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int)* numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
 
 
+	// for compute hypervolume & minimum distance out process
+	for (i = 0; i < pop_size * 2; i++)
+	{
+		h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
+	}
+
+
 	// print minimum distance to ideal point
 	min_dist = MinEuclid(h_objval, pop_size);
 	printf("\nminimum distance to the ideal point : %f\n", min_dist);
@@ -1326,22 +1333,22 @@ int main()
 
 
 	/* print objective value */
-	for (i = 0; i < pop_size * 2; i++)
-	{
-		printf("%d solution\n", i + 1);
-		printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-		printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
-			h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
-			h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
-		printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
-	}
+	//for (i = 0; i < pop_size * 2; i++)
+	//{
+	//	printf("%d solution\n", i + 1);
+	//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+	//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
+	//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
+	//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
+	//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
+	//}
 
 
 	fp = fopen("test.txt", "w");
 	/* for computing hypervolume write file */
 	for (i = 0; i < pop_size * 2; i++)
 	{
-		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD] / 0.4, h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
 	}
 	fclose(fp);
 

@@ -47,7 +47,7 @@
 #define SECOND_SOL 2
 
 #define IDEAL_MCAI 1
-#define IDEAL_MHD 0.4f
+#define IDEAL_MHD 1
 #define IDEAL_MLRCS 0
 #define EUCLID(val1, val2, val3) (float)sqrt(pow(IDEAL_MCAI - val1, 2) + pow(IDEAL_MHD - val2, 2) + pow(val3, 2))
 
@@ -618,6 +618,7 @@ __host__ __device__ void Sol_assign(Sol* s1, Sol* s2)
 
 	return;
 }
+
 /* 
 Based on sorting methods on NSGA2 paper
 If we input number of threads and sorting function into cudaOccupancyMaxActiveBlocksPerMultiprocessor(), we get number of blocks available to use
@@ -666,7 +667,7 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 		}
 	}
 	grid.sync();
-	
+
 
 	/* -------------------- 1st front setting -------------------- */
 	for (i = 0; i < block_partition; i++)
@@ -704,9 +705,9 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 	grid.sync();
 
 	// crowding distance sort
-	if (count > (c_sort_popsize / 2)) 
+	if (count > (c_sort_popsize / 2))
 	{
-		for (i = 0; i < block_partition; i++){
+		for (i = 0; i < block_partition; i++) {
 			idx_1 = gridDim.x * i + blockIdx.x;
 			if (threadIdx.x == 0 && idx_1 < c_sort_popsize && F_set[front * c_sort_popsize + idx_1]) {
 				while (atomicCAS(&lock, 0, 1) != 0);
@@ -719,9 +720,8 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 				atomicExch(&lock, 0);
 			}
 		}
-	}
-	grid.sync();
-	if (count > (c_sort_popsize / 2)) {
+		grid.sync();
+
 		for (i = 0; i < OBJECTIVE_NUM; i++)
 		{
 			if (blockIdx.x == 0 && threadIdx.x == 0) {
@@ -742,8 +742,6 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 					sol_struct[j].corwding_dist += sol_struct[j + 1].obj_val[i] - sol_struct[j - 1].obj_val[i];
 			}
 		}
-	}
-	if (count > (c_sort_popsize / 2)) {
 		if (blockIdx.x == 0 && threadIdx.x == 0) {
 			for (i = 0; i < rank_count[front]; i++) {
 				for (j = 0; j < rank_count[front] - 1 - i; j++) {
@@ -755,25 +753,23 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 				}
 			}
 		}
-	}
-	grid.sync();
-	if (count > c_sort_popsize / 2) {
+		grid.sync();
+
 		crw_partition = rank_count[front] % gridDim.x == 0 ? rank_count[front] / gridDim.x : rank_count[front] / gridDim.x + 1;
 		for (i = 0; i < crw_partition; i++) {
 			crw_idx = gridDim.x * i + blockIdx.x;
 			if (threadIdx.x == 0 && crw_idx < rank_count[front]) {
 				d_sorted_array[count - rank_count[front] + crw_idx] = sol_struct[crw_idx].sol_idx;
-				printf("dfgfg z; %d %d\n", crw_idx, sol_struct[crw_idx].sol_idx);
 			}
 		}
-	}
-	if(count > c_sort_popsize/2)
+
 		return;
+	}
+
 
 	if (blockIdx.x == 0 && threadIdx.x == 0)
 		front += 1;
-	grid.sync(); 
-	
+	grid.sync();
 	/* -------------------- non dominated sort  -------------------- */
 	for (c = 0; c < c_sort_popsize - 1; c++) {
 		for (i = 0; i < block_partition; i++)
@@ -807,6 +803,9 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 		grid.sync();
 	}
 
+
+
+	// crowding distance sort
 	for (i = 0; i < block_partition; i++) {
 		idx_1 = gridDim.x * i + blockIdx.x;
 		if (threadIdx.x == 0 && idx_1 < c_sort_popsize && F_set[front * c_sort_popsize + idx_1]) {
@@ -821,6 +820,7 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 		}
 	}
 	grid.sync();
+
 	for (i = 0; i < OBJECTIVE_NUM; i++)
 	{
 		if (blockIdx.x == 0 && threadIdx.x == 0) {
@@ -834,8 +834,8 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 				}
 			}
 
-			sol_struct[0].corwding_dist = 10000;
-			sol_struct[rank_count[front] - 1].corwding_dist = 10000;
+			sol_struct[0].corwding_dist = 10000.f;
+			sol_struct[rank_count[front] - 1].corwding_dist = 10000.f;
 
 			for (j = 1; j < rank_count[front] - 1; j++)
 				sol_struct[j].corwding_dist += sol_struct[j + 1].obj_val[i] - sol_struct[j - 1].obj_val[i];
@@ -853,15 +853,14 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 		}
 	}
 	grid.sync();
+
 	crw_partition = rank_count[front] % gridDim.x == 0 ? rank_count[front] / gridDim.x : rank_count[front] / gridDim.x + 1;
 	for (i = 0; i < crw_partition; i++) {
 		crw_idx = gridDim.x * i + blockIdx.x;
-		if (threadIdx.x == 0 && crw_idx < rank_count[front]) 
+		if (threadIdx.x == 0 && crw_idx < rank_count[front]) {
 			d_sorted_array[count - rank_count[front] + crw_idx] = sol_struct[crw_idx].sol_idx;
+		}
 	}
-
-	/* -------------------- update d_sorted array -------------------- */
-	
 
 
 	return;
@@ -1633,6 +1632,12 @@ int main()
 	CHECK_CUDA(cudaMemcpy(h_sorted_array, d_sorted_array, sizeof(int) * numBlocks * 2, cudaMemcpyDeviceToHost))
 
 
+	// for compute hypervolume & minimum distance out process
+	for (i = 0; i < pop_size * 2; i++)
+	{
+		h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
+	}
+
 	// print minimum distance to ideal point
 	min_dist = MinEuclid(h_objval, pop_size * 2);
 	printf("minimum distance to the ideal point : %f\n", min_dist);
@@ -1658,23 +1663,23 @@ int main()
 	//}
 
 	/* print objective value */
-	printf("\n\n");
-	for (i = 0; i < pop_size * 2; i++)
-	{
-		printf("%d solution\n", i + 1);
-		printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-		printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
-			h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
-			h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
-		printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
-	}
+	//printf("\n\n");
+	//for (i = 0; i < pop_size * 2; i++)
+	//{
+	//	printf("%d solution\n", i + 1);
+	//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+	//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
+	//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
+	//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
+	//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
+	//}
 
 
 	fp = fopen("test.txt", "w");
 	/* for computing hypervolume write file */
 	for (i = 0; i < pop_size * 2; i++)
 	{
-		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD] / 0.4, h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
 	}
 	fclose(fp);
 
