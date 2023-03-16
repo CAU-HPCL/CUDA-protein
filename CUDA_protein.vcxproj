@@ -11,6 +11,8 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <CudaCompile Include="NSGA2_sorting.cu" />
+    <CudaCompile Include="pre_proc_sorting.cu" />
     <CudaCompile Include="test.cu" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
