@@ -1829,10 +1829,10 @@ int main()
 	printf("minimum distance to the ideal point : %f\n", min_dist);
 	printf("lowest mcai value : %f\n", lowest_mcai);
 
-	printf("\nSorted array index : \n");
-	for (i = 0; i < pop_size; i++) {
-		printf("%d ", h_sorted_array[i]);
-	}
+	//printf("\nSorted array index : \n");
+	//for (i = 0; i < pop_size; i++) {
+	//	printf("%d ", h_sorted_array[i]);
+	//}
 
 	/* print solution */
 	//for (i = 0; i < pop_size * 2; i++)
