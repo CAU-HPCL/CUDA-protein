@@ -1168,7 +1168,6 @@ int main()
 	/* for time and mcai section cehck */
 	cudaEvent_t d_start, d_end;
 	float kernel_time;
-
 	float total_time = 0;
 
 	cudaEventCreate(&d_start);
@@ -1287,7 +1286,13 @@ int main()
 	CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
 
 		/* ------------------------------------------------ kerenl call ----------------------------------------------- */
-	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
+		cudaEventRecord(d_start);
+		setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
+		cudaEventRecord(d_end);
+		cudaEventSynchronize(d_end);
+		cudaEventElapsedTime(&kernel_time, d_start, d_end);
+		total_time += kernel_time;
+
 
 	cudaEventRecord(d_start);
 	mainKernel << <numBlocks, threadsPerBlock,
@@ -1296,9 +1301,9 @@ int main()
 	cudaEventRecord(d_end);
 	cudaEventSynchronize(d_end);
 	cudaEventElapsedTime(&kernel_time, d_start, d_end);
-	printf("\nGPU kerenl cycle time : %f second\n\n", kernel_time / 1000.f);
-	printf("using shared memory size : %lu\n", sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
-	printf("using contant memory size : %lu\n\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
+	//printf("\nGPU kerenl cycle time : %f second\n\n", kernel_time / 1000.f);
+	//printf("using shared memory size : %lu\n", sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
+	//printf("using contant memory size : %lu\n\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
 	total_time += kernel_time;
 
 
@@ -1319,7 +1324,7 @@ int main()
 	// print minimum distance to ideal point
 	min_dist = MinEuclid(h_objval, pop_size);
 	printf("\nminimum distance to the ideal point : %f\n", min_dist);
-	printf("lowest mcai value : %f\n", lowest_mcai);
+	//printf("lowest mcai value : %f\n", lowest_mcai);
 
 
 	/* print solution */
@@ -1348,7 +1353,7 @@ int main()
 	//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
 	//}
 
-	auto start = std::chrono::high_resolution_clock::now();
+	std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
 	fp = fopen("test.txt", "w");
 	/* for computing hypervolume write file */
 	for (i = 0; i < pop_size * 2; i++)
@@ -1356,9 +1361,8 @@ int main()
 		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
 	}
 	fclose(fp);
-	auto end = std::chrono::high_resolution_clock::now();
-	auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-	total_time += duration.count() / 1000000.0;
+	std::chrono::duration<double>sec = std::chrono::system_clock::now() - start;
+	total_time += static_cast<float>(sec.count());
 	printf("\n\n total time : %f\n\n", total_time);
 
 

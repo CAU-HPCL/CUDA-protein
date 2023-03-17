@@ -1642,7 +1642,6 @@ int main()
 
 	cudaEvent_t d_start, d_end;
 	float kernel_time;
-
 	float total_time = 0;
 
 	CHECK_CUDA(cudaEventCreate(&d_start))
@@ -1772,7 +1771,13 @@ int main()
 
 
 		/* ------------------------------------------------ kerenl call ----------------------------------------------- */
+		CHECK_CUDA(cudaEventRecord(d_start))
 		setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
+	CHECK_CUDA(cudaEventRecord(d_end))
+		CHECK_CUDA(cudaEventSynchronize(d_end))
+		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+		total_time += kernel_time;
+
 
 	CHECK_CUDA(cudaEventRecord(d_start))
 		GenSolution << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM) >> >
@@ -1780,7 +1785,7 @@ int main()
 	CHECK_CUDA(cudaEventRecord(d_end))
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-		printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
+		//printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
 	total_time += kernel_time;
 
 
@@ -1788,7 +1793,7 @@ int main()
 	/* For check sorting */
 	int numBlocksPerSm = 0;
 	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
-		printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
+		//printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
 	void* args[] = { &d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_np, &d_rank_count, &d_sol_struct };
 	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
@@ -1808,9 +1813,9 @@ int main()
 	CHECK_CUDA(cudaEventRecord(d_end))
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-		printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
-	printf("using shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
-	printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
+		//printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
+	//printf("using shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
+	//printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
 	total_time += kernel_time;
 
 
@@ -1833,7 +1838,7 @@ int main()
 	// print minimum distance to ideal point
 	min_dist = MinEuclid(h_objval, pop_size * 2);
 	printf("minimum distance to the ideal point : %f\n", min_dist);
-	printf("lowest mcai value : %f\n", lowest_mcai);
+	//printf("lowest mcai value : %f\n", lowest_mcai);
 
 	//printf("\nSorted array index : \n");
 	//for (i = 0; i < pop_size; i++) {
@@ -1866,7 +1871,7 @@ int main()
 	//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
 	//}
 
-	auto start = std::chrono::high_resolution_clock::now();
+	std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
 	fp = fopen("test.txt", "w");
 	/* for computing hypervolume write file */
 	for (i = 0; i < pop_size * 2; i++)
@@ -1874,9 +1879,8 @@ int main()
 		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
 	}
 	fclose(fp);
-	auto end = std::chrono::high_resolution_clock::now();
-	auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-	total_time += duration.count() / 1000000.0;
+	std::chrono::duration<double>sec = std::chrono::system_clock::now() - start;
+	total_time += static_cast<float>(sec.count());
 	printf("\n\n total time : %f\n\n", total_time);
 
 
