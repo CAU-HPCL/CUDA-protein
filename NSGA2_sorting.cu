@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <chrono>
 
 /* include CUDA header */
 #include <cuda_runtime.h>
@@ -1530,6 +1531,9 @@ int main()
 
 	cudaEvent_t d_start, d_end;
 	float kernel_time;
+	
+	float total_time = 0;
+
 	CHECK_CUDA(cudaEventCreate(&d_start))
 		CHECK_CUDA(cudaEventCreate(&d_end))
 
@@ -1659,7 +1663,7 @@ int main()
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
 		printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
-
+	total_time += kernel_time;
 
 
 	/* For check sorting */
@@ -1686,27 +1690,26 @@ int main()
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
 		printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
-	//printf("using shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
+	printf("using mainKernel shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
 	printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
-
+	total_time += kernel_time;
+	
 
 
 
 	/* memory copy device to host */
-	CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * numBlocks * len_sol * 2, cudaMemcpyDeviceToHost))
-		CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost))
-		CHECK_CUDA(cudaMemcpy(h_objidx, d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2, cudaMemcpyDeviceToHost))
-		CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int) * numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
-		CHECK_CUDA(cudaMemcpy(h_sorted_array, d_sorted_array, sizeof(int) * numBlocks * 2, cudaMemcpyDeviceToHost))
-
+	CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char)* numBlocks* len_sol * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float)* numBlocks* OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_objidx, d_objidx, sizeof(char)* numBlocks* OBJECTIVE_NUM * 2 * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int)* numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_sorted_array, d_sorted_array, sizeof(int)* numBlocks * 2, cudaMemcpyDeviceToHost))
 
 		// for compute hypervolume & minimum distance out process
 		for (i = 0; i < pop_size * 2; i++)
 		{
 			h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
 		}
-
-	// print minimum distance to ideal point
+		// print minimum distance to ideal point
 	min_dist = MinEuclid(h_objval, pop_size * 2);
 	printf("minimum distance to the ideal point : %f\n", min_dist);
 	//printf("lowest mcai value : %f\n", lowest_mcai);
@@ -1742,7 +1745,7 @@ int main()
 	//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
 	//}
 
-
+	auto start = std::chrono::high_resolution_clock::now();
 	fp = fopen("test.txt", "w");
 	/* for computing hypervolume write file */
 	for (i = 0; i < pop_size * 2; i++)
@@ -1750,6 +1753,10 @@ int main()
 		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
 	}
 	fclose(fp);
+	auto end = std::chrono::high_resolution_clock::now();
+	auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+	total_time += duration.count() / 1000000.0;
+	printf("\n\n total time : %f\n\n", total_time);
 
 
 
