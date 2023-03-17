@@ -367,7 +367,16 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			}
 			__syncthreads();
 
-			j /= 2;
+			if (j % 2 == 0)
+				j /= 2;
+			else {
+				if (threadIdx.x == 0) {
+					for (int z = 1; z < j; z++)
+						s_obj_compute[0] *= s_obj_compute[z];
+				}
+				__syncthreads();
+				break;
+			}
 		}
 
 		if (threadIdx.x == 0) {
@@ -460,7 +469,16 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 					}
 					__syncthreads();
 
-					j /= 2;
+					if (j % 2 == 0)
+						j /= 2;
+					else {
+						if (threadIdx.x == 0) {
+							for (int z = 1; z < j; z++)
+								s_obj_compute[0] *= s_obj_compute[z];
+						}
+						__syncthreads();
+						break;
+					}
 				}
 
 				if (threadIdx.x == 0) {
@@ -505,7 +523,16 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 				}
 				__syncthreads();
 
-				k /= 2;
+				if (k % 2 == 0)
+					k /= 2;
+				else {
+					if (threadIdx.x == 0) {
+						for (int z = 1; z < k; z++)
+							s_obj_compute[0] += s_obj_compute[z];
+					}
+					__syncthreads();
+					break;
+				}
 			}
 
 			if (threadIdx.x == 0) {
@@ -1276,7 +1303,16 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 				}
 				__syncthreads();
 
-				j /= 2;
+				if (j % 2 == 0)
+					j /= 2;
+				else {
+					if (threadIdx.x == 0) {
+						for (int z = 1; z < j; z++)
+							s_obj_compute[0] *= s_obj_compute[z];
+					}
+					__syncthreads();
+					break;
+				}
 			}
 
 			if (threadIdx.x == 0) {
@@ -1315,7 +1351,16 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 					}
 					__syncthreads();
 
-					k /= 2;
+					if (k % 2 == 0)
+						k /= 2;
+					else {
+						if (threadIdx.x == 0) {
+							for (int z = 1; z < k; z++)
+								s_obj_compute[0] += s_obj_compute[z];
+						}
+						__syncthreads();
+						break;
+					}
 				}
 
 				if (threadIdx.x == 0) {

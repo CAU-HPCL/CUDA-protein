@@ -360,7 +360,17 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			}
 			__syncthreads();
 
-			j /= 2;
+			if(j % 2 == 0)
+				j /= 2;
+			else {
+				if (threadIdx.x == 0) {
+					for (int z = 1; z < j; z++)
+						s_obj_compute[0] *= s_obj_compute[z];
+				}
+				__syncthreads();
+				break;
+			}
+
 		}
 
 		if (threadIdx.x == 0) {
@@ -400,7 +410,16 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 				}
 				__syncthreads();
 
-				k /= 2;
+				if (k % 2 == 0)
+					k /= 2;
+				else {
+					if (threadIdx.x == 0) {
+						for (int z = 1; z < k; z++)
+							s_obj_compute[0] += s_obj_compute[z];
+					}
+					__syncthreads();
+					break;
+				}
 			}
 
 			if (threadIdx.x == 0) {
@@ -1450,358 +1469,347 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 	return;
 }
 
-int aaa[32];
+
 
 int main()
 {
-	for (int z = 1; z <= 32; z++) {
-		srand((unsigned int)time(NULL));
+	srand((unsigned int)time(NULL));
 
-		/* To get information of Deivce */
-		int dev = 0;							// number of device (GPU)
-		int maxSharedMemPerBlock;
-		int maxSharedMemPerProcessor;
-		int totalConstantMem;
-		int maxRegisterPerProcessor;
-		int maxRegisterPerBlock;
-		int totalMultiProcessor;
-		cudaDeviceProp deviceProp;
+	/* To get information of Deivce */
+	int dev = 0;							// number of device (GPU)
+	int maxSharedMemPerBlock;
+	int maxSharedMemPerProcessor;
+	int totalConstantMem;
+	int maxRegisterPerProcessor;
+	int maxRegisterPerBlock;
+	int totalMultiProcessor;
+	cudaDeviceProp deviceProp;
 
-		CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, dev))
-			CHECK_CUDA(cudaDeviceGetAttribute(&maxSharedMemPerBlock, cudaDevAttrMaxSharedMemoryPerBlock, dev))
-			CHECK_CUDA(cudaDeviceGetAttribute(&maxSharedMemPerProcessor, cudaDevAttrMaxRegistersPerMultiprocessor, dev))
-			CHECK_CUDA(cudaDeviceGetAttribute(&totalConstantMem, cudaDevAttrTotalConstantMemory, dev))
-			CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerProcessor, cudaDevAttrMaxRegistersPerMultiprocessor, dev))
-			CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerBlock, cudaDevAttrMaxRegistersPerBlock, dev))
-			CHECK_CUDA(cudaDeviceGetAttribute(&totalMultiProcessor, cudaDevAttrMultiProcessorCount, dev))
+	CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, dev))
+		CHECK_CUDA(cudaDeviceGetAttribute(&maxSharedMemPerBlock, cudaDevAttrMaxSharedMemoryPerBlock, dev))
+		CHECK_CUDA(cudaDeviceGetAttribute(&maxSharedMemPerProcessor, cudaDevAttrMaxRegistersPerMultiprocessor, dev))
+		CHECK_CUDA(cudaDeviceGetAttribute(&totalConstantMem, cudaDevAttrTotalConstantMemory, dev))
+		CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerProcessor, cudaDevAttrMaxRegistersPerMultiprocessor, dev))
+		CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerBlock, cudaDevAttrMaxRegistersPerBlock, dev))
+		CHECK_CUDA(cudaDeviceGetAttribute(&totalMultiProcessor, cudaDevAttrMultiProcessorCount, dev))
 
-		//	printf("Device #%d:\n", dev);
-		//printf("Name: %s\n", deviceProp.name);
-		//printf("Compute capability: %d.%d\n", deviceProp.major, deviceProp.minor);
-		//printf("Clock rate: %d MHz\n", deviceProp.clockRate / 1000);
-		//printf("Global memory size: %lu MB\n", deviceProp.totalGlobalMem / (1024 * 1024));
-		//printf("Max thread dimensions: (%d, %d, %d)\n", deviceProp.maxThreadsDim[0], deviceProp.maxThreadsDim[1], deviceProp.maxThreadsDim[2]);
-		//printf("Max grid dimensions: (%d, %d, %d)\n", deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]);
-		//printf("Total constant memory: %d bytes\n", totalConstantMem);
-		//printf("Max threads per SM: %d\n", deviceProp.maxThreadsPerMultiProcessor);
-		//printf("Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
-		//printf("Maximum shared memory per SM: %d bytes\n", maxSharedMemPerProcessor);
-		//printf("Maximum shared memory per block: %d bytes\n", maxSharedMemPerBlock);
-		//printf("Maximum number of registers per SM: %d\n", maxRegisterPerProcessor);
-		//printf("Maximum number of registers per block: %d\n", maxRegisterPerBlock);
-		//printf("Total number of SM in device: %d\n", totalMultiProcessor);
-		//printf("\n");
+		printf("Device #%d:\n", dev);
+	printf("Name: %s\n", deviceProp.name);
+	printf("Compute capability: %d.%d\n", deviceProp.major, deviceProp.minor);
+	printf("Clock rate: %d MHz\n", deviceProp.clockRate / 1000);
+	printf("Global memory size: %lu MB\n", deviceProp.totalGlobalMem / (1024 * 1024));
+	printf("Max thread dimensions: (%d, %d, %d)\n", deviceProp.maxThreadsDim[0], deviceProp.maxThreadsDim[1], deviceProp.maxThreadsDim[2]);
+	printf("Max grid dimensions: (%d, %d, %d)\n", deviceProp.maxGridSize[0], deviceProp.maxGridSize[1], deviceProp.maxGridSize[2]);
+	printf("Total constant memory: %d bytes\n", totalConstantMem);
+	printf("Max threads per SM: %d\n", deviceProp.maxThreadsPerMultiProcessor);
+	printf("Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
+	printf("Maximum shared memory per SM: %d bytes\n", maxSharedMemPerProcessor);
+	printf("Maximum shared memory per block: %d bytes\n", maxSharedMemPerBlock);
+	printf("Maximum number of registers per SM: %d\n", maxRegisterPerProcessor);
+	printf("Maximum number of registers per block: %d\n", maxRegisterPerBlock);
+	printf("Total number of SM in device: %d\n", totalMultiProcessor);
+	printf("\n");
 
-		char input_file[32] = "Q5VZP5.fasta.txt";
-		char* amino_seq;						// store amino sequences from input file
-		char* h_amino_seq_idx;					// notify index of amino abbreviation array corresponding input amino sequences
-		char* h_amino_startpos;					// notify position of according amino abbreviation index
-		char* h_pop;							// store population (a set of solutions)
-		float* h_objval;						// store objective values of population (solution 1, solution 2 .... solution n)
-		char* h_objidx;
-		int* h_lrcsval;
-		int* h_sorted_array;					// for check sorting in GPU
-		int len_amino_seq, len_cds, len_sol;
-		int pop_size = 128;
-		int total_cycle = 100;
-		int sorting_cycle = 1;
-		int cds_num = 2;							// size of solution equal to number of CDSs(codon sequences) in a solution
-		float mprob = 0.05;							// mutation probability
-		float min_dist;
+	char input_file[32];
+	char* amino_seq;						// store amino sequences from input file
+	char* h_amino_seq_idx;					// notify index of amino abbreviation array corresponding input amino sequences
+	char* h_amino_startpos;					// notify position of according amino abbreviation index
+	char* h_pop;							// store population (a set of solutions)
+	float* h_objval;						// store objective values of population (solution 1, solution 2 .... solution n)
+	char* h_objidx;
+	int* h_lrcsval;
+	int* h_sorted_array;					// for check sorting in GPU
+	int len_amino_seq, len_cds, len_sol;
+	int pop_size;
+	int total_cycle;
+	int sorting_cycle;
+	int cds_num;							// size of solution equal to number of CDSs(codon sequences) in a solution
+	float mprob;							// mutation probability
+	float min_dist;
 
-		char tmp;
-		int i, j, k;
-		int x;
-		int idx;
-		char buf[256];
-		FILE* fp;
+	char tmp;
+	int i, j, k;
+	int x;
+	int idx;
+	char buf[256];
+	FILE* fp;
 
-		int numBlocks;
-		int threadsPerBlock;
+	int numBlocks;
+	int threadsPerBlock;
 
-		char* d_amino_seq_idx;
-		char* d_pop;
-		float* d_objval;
-		char* d_objidx;
-		int* d_lrcsval;
-		int* d_sorted_array;
-		bool* d_F_set, * d_Sp_set;
-		int* d_np, * d_rank_count;
-		Sol* d_sol_struct;
-		curandStateXORWOW* genState;
+	char* d_amino_seq_idx;
+	char* d_pop;
+	float* d_objval;
+	char* d_objidx;
+	int* d_lrcsval;
+	int* d_sorted_array;
+	bool* d_F_set, * d_Sp_set;
+	int* d_np, * d_rank_count;
+	Sol* d_sol_struct;
+	curandStateXORWOW* genState;
 
-		cudaEvent_t d_start, d_end;
-		float kernel_time;
+	cudaEvent_t d_start, d_end;
+	float kernel_time;
+	float total_time = 0;
 
-		float total_time = 0;
-
-		CHECK_CUDA(cudaEventCreate(&d_start))
-			CHECK_CUDA(cudaEventCreate(&d_end))
+	CHECK_CUDA(cudaEventCreate(&d_start))
+		CHECK_CUDA(cudaEventCreate(&d_end))
 
 
-			/* input parameter values */
-		//	printf("input file name : "); scanf("%s", input_file);
-		//printf("input number of cycle : "); scanf("%d", &total_cycle);
-		//if (total_cycle < 0) {
-		//	printf("input max cycle value >= 0\n");
-		//	return EXIT_FAILURE;
-		//}
-		//printf("input number of sorting cycle : "); scanf("%d", &sorting_cycle);
-		//if (sorting_cycle <= 0) {
-		//	printf("input sorting cycle value > 0\n");
-		//	return EXIT_FAILURE;
-		//}
-		//printf("input number of solution : "); scanf("%d", &pop_size);
-		//if (pop_size <= 0) {
-		//	printf("input number of solution > 0\n");
-		//	return EXIT_FAILURE;
-		//}
-		//printf("input number of CDSs in a solution : "); scanf("%d", &cds_num);
-		//if (cds_num <= 1) {
-		//	printf("input number of CDSs > 1\n");
-		//	return EXIT_FAILURE;
-		//}
-		//printf("input mutation probability (0 ~ 1 value) : "); scanf("%f", &mprob);
-		//if (mprob < 0 || mprob > 1) {
-		//	printf("input mutation probability (0 ~ 1 value) : \n");
-		//	return EXIT_FAILURE;
-		//}
-		//printf("input thread per block x value --> number of thread  warp size (32) * x : "); scanf("%d", &x);
+		/* input parameter values */
+		printf("input file name : "); scanf("%s", input_file);
+	printf("input number of cycle : "); scanf("%d", &total_cycle);
+	if (total_cycle < 0) {
+		printf("input max cycle value >= 0\n");
+		return EXIT_FAILURE;
+	}
+	printf("input number of sorting cycle : "); scanf("%d", &sorting_cycle);
+	if (sorting_cycle <= 0) {
+		printf("input sorting cycle value > 0\n");
+		return EXIT_FAILURE;
+	}
+	printf("input number of solution : "); scanf("%d", &pop_size);
+	if (pop_size <= 0) {
+		printf("input number of solution > 0\n");
+		return EXIT_FAILURE;
+	}
+	printf("input number of CDSs in a solution : "); scanf("%d", &cds_num);
+	if (cds_num <= 1) {
+		printf("input number of CDSs > 1\n");
+		return EXIT_FAILURE;
+	}
+	printf("input mutation probability (0 ~ 1 value) : "); scanf("%f", &mprob);
+	if (mprob < 0 || mprob > 1) {
+		printf("input mutation probability (0 ~ 1 value) : \n");
+		return EXIT_FAILURE;
+	}
+	printf("input thread per block x value --> number of thread  warp size (32) * x : "); scanf("%d", &x);
 
 
-		/* read input file (fasta format) */
-		fp = fopen(input_file, "r");
-		if (fp == NULL) {
-			printf("Line : %d Opening input file is failed", __LINE__);
+	/* read input file (fasta format) */
+	fp = fopen(input_file, "r");
+	if (fp == NULL) {
+		printf("Line : %d Opening input file is failed", __LINE__);
+		return EXIT_FAILURE;
+	}
+
+	fseek(fp, 0, SEEK_END);
+	len_amino_seq = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	fgets(buf, 256, fp);
+	len_amino_seq -= ftell(fp);
+
+	amino_seq = (char*)malloc(sizeof(char) * len_amino_seq);
+
+	idx = 0;
+	while (!feof(fp)) {
+		tmp = fgetc(fp);
+		if (tmp != '\n')
+			amino_seq[idx++] = tmp;
+	}
+	amino_seq[idx] = NULL;
+	len_amino_seq = idx - 1;
+	len_cds = len_amino_seq * CODON_SIZE;
+	len_sol = len_cds * cds_num;
+
+	fclose(fp);
+	/* end file process */
+
+	h_amino_seq_idx = (char*)malloc(sizeof(char) * len_amino_seq);
+	for (i = 0; i < len_amino_seq; i++) {
+		idx = FindAminoIndex(amino_seq[i]);
+		if (idx == NOT_FOUND) {
+			printf("FindAminoIndex function is failed... \n");
 			return EXIT_FAILURE;
 		}
+		h_amino_seq_idx[i] = idx;
+	}
 
-		fseek(fp, 0, SEEK_END);
-		len_amino_seq = ftell(fp);
-		fseek(fp, 0, SEEK_SET);
-		fgets(buf, 256, fp);
-		len_amino_seq -= ftell(fp);
+	h_amino_startpos = (char*)malloc(sizeof(char) * 20);
+	h_amino_startpos[0] = 0;
+	for (i = 1; i < 20; i++) {
+		h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
+	}
 
-		amino_seq = (char*)malloc(sizeof(char) * len_amino_seq);
+	numBlocks = pop_size;
+	threadsPerBlock = WARP_SIZE * x;
+	int twice_pop = pop_size * 2;
 
-		idx = 0;
-		while (!feof(fp)) {
-			tmp = fgetc(fp);
-			if (tmp != '\n')
-				amino_seq[idx++] = tmp;
-		}
-		amino_seq[idx] = NULL;
-		len_amino_seq = idx - 1;
-		len_cds = len_amino_seq * CODON_SIZE;
-		len_sol = len_cds * cds_num;
-
-		fclose(fp);
-		/* end file process */
-
-		h_amino_seq_idx = (char*)malloc(sizeof(char) * len_amino_seq);
-		for (i = 0; i < len_amino_seq; i++) {
-			idx = FindAminoIndex(amino_seq[i]);
-			if (idx == NOT_FOUND) {
-				printf("FindAminoIndex function is failed... \n");
-				return EXIT_FAILURE;
-			}
-			h_amino_seq_idx[i] = idx;
-		}
-
-		h_amino_startpos = (char*)malloc(sizeof(char) * 20);
-		h_amino_startpos[0] = 0;
-		for (i = 1; i < 20; i++) {
-			h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
-		}
-
-		numBlocks = pop_size;
-		threadsPerBlock = WARP_SIZE * z;
-		int twice_pop = pop_size * 2;
-
-		/* host memory allocation */
-		h_pop = (char*)malloc(sizeof(char) * pop_size * len_sol * 2);
-		h_objval = (float*)malloc(sizeof(float) * pop_size * OBJECTIVE_NUM * 2);
-		h_objidx = (char*)malloc(sizeof(char) * pop_size * OBJECTIVE_NUM * 2 * 2);
-		h_lrcsval = (int*)malloc(sizeof(int) * pop_size * 3 * 2);
-		h_sorted_array = (int*)malloc(sizeof(int) * pop_size * 2);
+	/* host memory allocation */
+	h_pop = (char*)malloc(sizeof(char) * pop_size * len_sol * 2);
+	h_objval = (float*)malloc(sizeof(float) * pop_size * OBJECTIVE_NUM * 2);
+	h_objidx = (char*)malloc(sizeof(char) * pop_size * OBJECTIVE_NUM * 2 * 2);
+	h_lrcsval = (int*)malloc(sizeof(int) * pop_size * 3 * 2);
+	h_sorted_array = (int*)malloc(sizeof(int) * pop_size * 2);
 
 
-		/* device memory allocation */
-		CHECK_CUDA(cudaMalloc((void**)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock))
-			CHECK_CUDA(cudaMalloc((void**)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
-			CHECK_CUDA(cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_lrcsval, sizeof(int) * numBlocks * 3 * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_sorted_array, sizeof(int) * numBlocks * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_F_set, sizeof(bool) * numBlocks * 2 * numBlocks * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_Sp_set, sizeof(bool) * numBlocks * 2 * numBlocks * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_rank_count, sizeof(int) * numBlocks * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_np, sizeof(int) * numBlocks * 2))
-			CHECK_CUDA(cudaMalloc((void**)&d_sol_struct, sizeof(Sol) * numBlocks * 2))
+	/* device memory allocation */
+	CHECK_CUDA(cudaMalloc((void**)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock))
+		CHECK_CUDA(cudaMalloc((void**)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
+		CHECK_CUDA(cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_lrcsval, sizeof(int) * numBlocks * 3 * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_sorted_array, sizeof(int) * numBlocks * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_F_set, sizeof(bool) * numBlocks * 2 * numBlocks * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_Sp_set, sizeof(bool) * numBlocks * 2 * numBlocks * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_rank_count, sizeof(int) * numBlocks * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_np, sizeof(int) * numBlocks * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_sol_struct, sizeof(Sol) * numBlocks * 2))
 
 
 
-			/* memory copy host to device */
-			CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_sort_popsize, &twice_pop, sizeof(int)))
+		/* memory copy host to device */
+		CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_sort_popsize, &twice_pop, sizeof(int)))
 
 
-			/* ------------------------------------------------ kerenl call ----------------------------------------------- */
-			CHECK_CUDA(cudaEventRecord(d_start))
-			setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
-		CHECK_CUDA(cudaEventRecord(d_end))
-			CHECK_CUDA(cudaEventSynchronize(d_end))
-			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-			total_time += kernel_time/1000.f;
-
+		/* ------------------------------------------------ kerenl call ----------------------------------------------- */
 		CHECK_CUDA(cudaEventRecord(d_start))
-			GenSolution << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM) >> >
-			(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array);
-		CHECK_CUDA(cudaEventRecord(d_end))
-			CHECK_CUDA(cudaEventSynchronize(d_end))
-			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-			//printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
-		total_time += kernel_time/1000.f;
+		setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
+	CHECK_CUDA(cudaEventRecord(d_end))
+		CHECK_CUDA(cudaEventSynchronize(d_end))
+		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+		total_time += kernel_time / 1000.f;
 
 
-		/* For check sorting */
-		int numBlocksPerSm = 0;
-		CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
-			//printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
+	CHECK_CUDA(cudaEventRecord(d_start))
+		GenSolution << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM) >> >
+		(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array);
+	CHECK_CUDA(cudaEventRecord(d_end))
+		CHECK_CUDA(cudaEventSynchronize(d_end))
+		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+		//printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
+		total_time += kernel_time / 1000.f;
+
+
+	/* For check sorting */
+	int numBlocksPerSm = 0;
+	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
+		//printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
 		void* args[] = { &d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_np, &d_rank_count, &d_sol_struct };
-		k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
-		CHECK_CUDA(cudaEventRecord(d_start))
-			for (i = 0; i < k; i++)
-			{
-				if (i == k - 1 && (total_cycle % sorting_cycle != 0)) {
-					mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
-						(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, d_sorted_array);
-				}
-				else {
-					mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
-						(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, d_sorted_array);
-				}
-				//	sorting
-				CHECK_CUDA(cudaLaunchCooperativeKernel((void*)FastSortSolution, deviceProp.multiProcessorCount * numBlocksPerSm, threadsPerBlock, args, 0))
-			}
-		CHECK_CUDA(cudaEventRecord(d_end))
-			CHECK_CUDA(cudaEventSynchronize(d_end))
-			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-		//	printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
-		//printf("using mainKernel shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
-		//printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
-		total_time += kernel_time/1000.f;
-
-
-
-
-		/* memory copy device to host */
-		CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * numBlocks * len_sol * 2, cudaMemcpyDeviceToHost))
-			CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost))
-			CHECK_CUDA(cudaMemcpy(h_objidx, d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2, cudaMemcpyDeviceToHost))
-			CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int) * numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
-			CHECK_CUDA(cudaMemcpy(h_sorted_array, d_sorted_array, sizeof(int) * numBlocks * 2, cudaMemcpyDeviceToHost))
-
-			// for compute hypervolume & minimum distance out process
-			for (i = 0; i < pop_size * 2; i++)
-			{
-				h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
-			}
-		// print minimum distance to ideal point
-		min_dist = MinEuclid(h_objval, pop_size * 2);
-		//printf("minimum distance to the ideal point : %f\n", min_dist);
-		//printf("lowest mcai value : %f\n", lowest_mcai);
-
-		//printf("\nSorted array index : \n");
-		//for (i = 0; i < pop_size; i++) {
-		//	printf("%d ", h_sorted_array[i]);
-		//}
-
-		/* print solution */
-		//for (i = 0; i < pop_size * 2; i++)
+	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
+	CHECK_CUDA(cudaEventRecord(d_start))
+		//for (i = 0; i < k; i++)
 		//{
-		//	printf("%d solution\n", i + 1);
-		//	for (j = 0; j < cds_num; j++) {
-		//		printf("%d cds : ", j + 1);
-		//		for (k = 0; k < len_cds; k++) {
-		//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
-		//		}
-		//		printf("\n");
+		//	if (i == k - 1 && (total_cycle % sorting_cycle != 0)) {
+		//		mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
+		//			(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, d_sorted_array);
 		//	}
-		//	printf("\n");
+		//	else {
+		//		mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
+		//			(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, d_sorted_array);
+		//	}
+		//	//	sorting
+		//	CHECK_CUDA(cudaLaunchCooperativeKernel((void*)FastSortSolution, deviceProp.multiProcessorCount * numBlocksPerSm, threadsPerBlock, args, 0))
 		//}
+	CHECK_CUDA(cudaEventRecord(d_end))
+		CHECK_CUDA(cudaEventSynchronize(d_end))
+		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+		//printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
+	//printf("using mainKernel shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
+	//printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
+		total_time += kernel_time / 1000.f;
 
-		/* print objective value */
-		//printf("\n\n");
-		//for (i = 0; i < pop_size * 2; i++)
-		//{
-		//	printf("%d solution\n", i + 1);
-		//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-		//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
-		//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
-		//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
-		//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
-		//}
-		std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
-		fp = fopen("test.txt", "w");
-		/* for computing hypervolume write file */
+
+
+
+	/* memory copy device to host */
+	CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * numBlocks * len_sol * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_objidx, d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int) * numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_sorted_array, d_sorted_array, sizeof(int) * numBlocks * 2, cudaMemcpyDeviceToHost))
+
+		// for compute hypervolume & minimum distance out process
 		for (i = 0; i < pop_size * 2; i++)
 		{
-			fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+			h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
 		}
-		fclose(fp);
-		std::chrono::duration<double>sec = std::chrono::system_clock::now() - start;
-		total_time += static_cast<float>(sec.count());
-		printf("\n\n total time : %f\n\n", total_time);
-		aaa[z - 1] = total_time;
+	// print minimum distance to ideal point
+	min_dist = MinEuclid(h_objval, pop_size * 2);
+	printf("minimum distance to the ideal point : %f\n", min_dist);
+	//printf("lowest mcai value : %f\n", lowest_mcai);
 
+	//printf("\nSorted array index : \n");
+	//for (i = 0; i < pop_size; i++) {
+	//	printf("%d ", h_sorted_array[i]);
+	//}
 
+	/* print solution */
+	//for (i = 0; i < pop_size * 2; i++)
+	//{
+	//	printf("%d solution\n", i + 1);
+	//	for (j = 0; j < cds_num; j++) {
+	//		printf("%d cds : ", j + 1);
+	//		for (k = 0; k < len_cds; k++) {
+	//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
+	//		}
+	//		printf("\n");
+	//	}
+	//	printf("\n");
+	//}
 
-		/* free deivce memory */
-		CHECK_CUDA(cudaFree(genState))
-			CHECK_CUDA(cudaFree(d_amino_seq_idx))
-			CHECK_CUDA(cudaFree(d_pop))
-			CHECK_CUDA(cudaFree(d_objval))
-			CHECK_CUDA(cudaFree(d_objidx))
-			CHECK_CUDA(cudaFree(d_lrcsval))
-			CHECK_CUDA(cudaFree(d_sorted_array))
-			CHECK_CUDA(cudaFree(d_F_set))
-			CHECK_CUDA(cudaFree(d_Sp_set))
-			CHECK_CUDA(cudaFree(d_rank_count))
-			CHECK_CUDA(cudaFree(d_np))
-			CHECK_CUDA(cudaFree(d_sol_struct))
-			CHECK_CUDA(cudaEventDestroy(d_start))
-			CHECK_CUDA(cudaEventDestroy(d_end))
+	/* print objective value */
+	//printf("\n\n");
+	//for (i = 0; i < pop_size * 2; i++)
+	//{
+	//	printf("%d solution\n", i + 1);
+	//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+	//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
+	//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
+	//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
+	//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
+	//}
 
-			/* free host memory */
-			free(amino_seq);
-		free(h_amino_seq_idx);
-		free(h_amino_startpos);
-		free(h_pop);
-		free(h_objval);
-		free(h_objidx);
-		free(h_lrcsval);
-		free(h_sorted_array);
-	}
-
-	float tmp = 100000;
-	int res;
-	for (int i = 0; i < 32; i++)
+	std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
+	fp = fopen("test.txt", "w");
+	/* for computing hypervolume write file */
+	for (i = 0; i < pop_size * 2; i++)
 	{
-		if (aaa[i] < tmp) {
-			tmp = aaa[i];
-			res = i + 1;
-		}
+		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
 	}
-	printf("\n res: %d", res);
+	fclose(fp);
+	std::chrono::duration<double>sec = std::chrono::system_clock::now() - start;
+	total_time += static_cast<float>(sec.count());
+	printf("\n\n total time : %f\n\n", total_time);
+
+
+
+
+	/* free deivce memory */
+	CHECK_CUDA(cudaFree(genState))
+		CHECK_CUDA(cudaFree(d_amino_seq_idx))
+		CHECK_CUDA(cudaFree(d_pop))
+		CHECK_CUDA(cudaFree(d_objval))
+		CHECK_CUDA(cudaFree(d_objidx))
+		CHECK_CUDA(cudaFree(d_lrcsval))
+		CHECK_CUDA(cudaFree(d_sorted_array))
+		CHECK_CUDA(cudaFree(d_F_set))
+		CHECK_CUDA(cudaFree(d_Sp_set))
+		CHECK_CUDA(cudaFree(d_rank_count))
+		CHECK_CUDA(cudaFree(d_np))
+		CHECK_CUDA(cudaFree(d_sol_struct))
+		CHECK_CUDA(cudaEventDestroy(d_start))
+		CHECK_CUDA(cudaEventDestroy(d_end))
+
+		/* free host memory */
+		free(amino_seq);
+	free(h_amino_seq_idx);
+	free(h_amino_startpos);
+	free(h_pop);
+	free(h_objval);
+	free(h_objidx);
+	free(h_lrcsval);
+	free(h_sorted_array);
+
 
 	return EXIT_SUCCESS;
 }
