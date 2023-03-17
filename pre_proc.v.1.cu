@@ -379,16 +379,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 			}
 			__syncthreads();
 
-			if (j % 2 == 0)
-				j /= 2;
-			else {
-				if (threadIdx.x == 0) {
-					for (int z = 1; z < j; z++)
-						s_obj_compute[0] *= s_obj_compute[z];
-				}
-				__syncthreads();
-				break;
-			}
+			j /= 2;
 		}
 
 		if (threadIdx.x == 0) {
@@ -481,16 +472,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 					}
 					__syncthreads();
 
-					if (j % 2 == 0)
-						j /= 2;
-					else {
-						if (threadIdx.x == 0) {
-							for (int z = 1; z < j; z++)
-								s_obj_compute[0] *= s_obj_compute[z];
-						}
-						__syncthreads();
-						break;
-					}
+					j /= 2;
 				}
 
 				if (threadIdx.x == 0) {
@@ -535,16 +517,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 				}
 				__syncthreads();
 
-				if (k % 2 == 0)
-					k /= 2;
-				else {
-					if (threadIdx.x == 0) {
-						for (int z = 1; z < k; z++)
-							s_obj_compute[0] += s_obj_compute[z];
-					}
-					__syncthreads();
-					break;
-				}
+				k /= 2;
 			}
 
 			if (threadIdx.x == 0) {
@@ -835,16 +808,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 				}
 				__syncthreads();
 
-				if (j % 2 == 0)
-					j /= 2;
-				else {
-					if (threadIdx.x == 0) {
-						for (int z = 1; z < j; z++)
-							s_obj_compute[0] *= s_obj_compute[z];
-					}
-					__syncthreads();
-					break;
-				}
+				j /= 2;
 			}
 
 			if (threadIdx.x == 0) {
@@ -883,16 +847,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 					}
 					__syncthreads();
 
-					if (k % 2 == 0)
-						k /= 2;
-					else {
-						if (threadIdx.x == 0) {
-							for (int z = 1; z < k; z++)
-								s_obj_compute[0] += s_obj_compute[z];
-						}
-						__syncthreads();
-						break;
-					}
+					k /= 2;
 				}
 
 				if (threadIdx.x == 0) {
@@ -1188,7 +1143,7 @@ int main()
 	int cds_num;							// size of solution equal to number of CDSs(codon sequences) in a solution
 	float mprob;							// mutation probability
 	float min_dist;
-	
+
 	float lowest_mcai;						// for divide initial solution section
 	int limit;
 
@@ -1313,30 +1268,30 @@ int main()
 
 	/* device memory allocation */
 	CHECK_CUDA(cudaMalloc((void**)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock))
-	CHECK_CUDA(cudaMalloc((void**)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
-	CHECK_CUDA(cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol * 2))
-	CHECK_CUDA(cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2))
-	CHECK_CUDA(cudaMalloc((void**)&d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2))
-	CHECK_CUDA(cudaMalloc((void**)&d_lrcsval, sizeof(int) * numBlocks * 3 * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
+		CHECK_CUDA(cudaMalloc((void**)&d_pop, sizeof(char) * numBlocks * len_sol * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2))
+		CHECK_CUDA(cudaMalloc((void**)&d_lrcsval, sizeof(int) * numBlocks * 3 * 2))
 
 
-	/* memory copy host to device */
-	CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
+		/* memory copy host to device */
+		CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
+		CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
 
 		/* ------------------------------------------------ kerenl call ----------------------------------------------- */
 		cudaEventRecord(d_start);
-		setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
-		cudaEventRecord(d_end);
-		cudaEventSynchronize(d_end);
-		cudaEventElapsedTime(&kernel_time, d_start, d_end);
-		total_time += kernel_time / 1000.f;
+	setup_kernel << <numBlocks, threadsPerBlock >> > (genState, rand());
+	cudaEventRecord(d_end);
+	cudaEventSynchronize(d_end);
+	cudaEventElapsedTime(&kernel_time, d_start, d_end);
+	total_time += kernel_time / 1000.f;
 
 
 	cudaEventRecord(d_start);
@@ -1353,17 +1308,17 @@ int main()
 
 
 	/* memory copy device to host */
-	CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char)* numBlocks* len_sol * 2, cudaMemcpyDeviceToHost))
-	CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float)* numBlocks* OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost))
-	CHECK_CUDA(cudaMemcpy(h_objidx, d_objidx, sizeof(char)* numBlocks* OBJECTIVE_NUM * 2 * 2, cudaMemcpyDeviceToHost))
-	CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int)* numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
+	CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * numBlocks * len_sol * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * numBlocks * OBJECTIVE_NUM * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_objidx, d_objidx, sizeof(char) * numBlocks * OBJECTIVE_NUM * 2 * 2, cudaMemcpyDeviceToHost))
+		CHECK_CUDA(cudaMemcpy(h_lrcsval, d_lrcsval, sizeof(int) * numBlocks * 3 * 2, cudaMemcpyDeviceToHost))
 
 
-	// for compute hypervolume & minimum distance out process
-	for (i = 0; i < pop_size * 2; i++)
-	{
-		h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
-	}
+		// for compute hypervolume & minimum distance out process
+		for (i = 0; i < pop_size * 2; i++)
+		{
+			h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
+		}
 
 
 	// print minimum distance to ideal point
@@ -1414,16 +1369,16 @@ int main()
 
 	/* free deivce memory */
 	CHECK_CUDA(cudaFree(genState))
-	CHECK_CUDA(cudaFree(d_amino_seq_idx))
-	CHECK_CUDA(cudaFree(d_pop))
-	CHECK_CUDA(cudaFree(d_objval))
-	CHECK_CUDA(cudaFree(d_objidx))
-	CHECK_CUDA(cudaFree(d_lrcsval))
-	CHECK_CUDA(cudaEventDestroy(d_start))
-	CHECK_CUDA(cudaEventDestroy(d_end))
+		CHECK_CUDA(cudaFree(d_amino_seq_idx))
+		CHECK_CUDA(cudaFree(d_pop))
+		CHECK_CUDA(cudaFree(d_objval))
+		CHECK_CUDA(cudaFree(d_objidx))
+		CHECK_CUDA(cudaFree(d_lrcsval))
+		CHECK_CUDA(cudaEventDestroy(d_start))
+		CHECK_CUDA(cudaEventDestroy(d_end))
 
-	/* free host memory */
-	free(amino_seq);
+		/* free host memory */
+		free(amino_seq);
 	free(h_amino_seq_idx);
 	free(h_amino_startpos);
 	free(h_pop);

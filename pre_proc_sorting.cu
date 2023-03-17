@@ -201,17 +201,17 @@ __device__ void mutation(curandStateXORWOW* state, const char* codon_info, char*
 		}
 		break;
 
-		case LOWER:
-			new_idx = (char)(curand_uniform(state) * origin_pos);
-			if (cd_prob <= mprob && origin_pos != 0) {
-				while (new_idx == origin_pos) {
-					new_idx = (char)(curand_uniform(state) * origin_pos);
-				}
-				target[0] = codon_info[new_idx * CODON_SIZE];
-				target[1] = codon_info[new_idx * CODON_SIZE + 1];
-				target[2] = codon_info[new_idx * CODON_SIZE + 2];
+	case LOWER:
+		new_idx = (char)(curand_uniform(state) * origin_pos);
+		if (cd_prob <= mprob && origin_pos != 0) {
+			while (new_idx == origin_pos) {
+				new_idx = (char)(curand_uniform(state) * origin_pos);
 			}
-			break;
+			target[0] = codon_info[new_idx * CODON_SIZE];
+			target[1] = codon_info[new_idx * CODON_SIZE + 1];
+			target[2] = codon_info[new_idx * CODON_SIZE + 2];
+		}
+		break;
 	}
 
 	return;
@@ -367,16 +367,7 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			}
 			__syncthreads();
 
-			if (j % 2 == 0)
-				j /= 2;
-			else {
-				if (threadIdx.x == 0) {
-					for (int z = 1; z < j; z++)
-						s_obj_compute[0] *= s_obj_compute[z];
-				}
-				__syncthreads();
-				break;
-			}
+			j /= 2;
 		}
 
 		if (threadIdx.x == 0) {
@@ -469,16 +460,7 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 					}
 					__syncthreads();
 
-					if (j % 2 == 0)
-						j /= 2;
-					else {
-						if (threadIdx.x == 0) {
-							for (int z = 1; z < j; z++)
-								s_obj_compute[0] *= s_obj_compute[z];
-						}
-						__syncthreads();
-						break;
-					}
+					j /= 2;
 				}
 
 				if (threadIdx.x == 0) {
@@ -523,16 +505,7 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 				}
 				__syncthreads();
 
-				if (k % 2 == 0)
-					k /= 2;
-				else {
-					if (threadIdx.x == 0) {
-						for (int z = 1; z < k; z++)
-							s_obj_compute[0] += s_obj_compute[z];
-					}
-					__syncthreads();
-					break;
-				}
+				k /= 2;
 			}
 
 			if (threadIdx.x == 0) {
@@ -1303,16 +1276,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 				}
 				__syncthreads();
 
-				if (j % 2 == 0)
-					j /= 2;
-				else {
-					if (threadIdx.x == 0) {
-						for (int z = 1; z < j; z++)
-							s_obj_compute[0] *= s_obj_compute[z];
-					}
-					__syncthreads();
-					break;
-				}
+				j /= 2;
 			}
 
 			if (threadIdx.x == 0) {
@@ -1351,16 +1315,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 					}
 					__syncthreads();
 
-					if (k % 2 == 0)
-						k /= 2;
-					else {
-						if (threadIdx.x == 0) {
-							for (int z = 1; z < k; z++)
-								s_obj_compute[0] += s_obj_compute[z];
-						}
-						__syncthreads();
-						break;
-					}
+					k /= 2;
 				}
 
 				if (threadIdx.x == 0) {
@@ -1831,7 +1786,7 @@ int main()
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
 		//printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
-	total_time += kernel_time / 1000.f;
+		total_time += kernel_time / 1000.f;
 
 
 
@@ -1839,7 +1794,7 @@ int main()
 	int numBlocksPerSm = 0;
 	CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, threadsPerBlock, 0))
 		//printf("\nFor sorting numBlockPerSm : %d\n", numBlocksPerSm);
-	void* args[] = { &d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_np, &d_rank_count, &d_sol_struct };
+		void* args[] = { &d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_np, &d_rank_count, &d_sol_struct };
 	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
 		for (i = 0; i < k; i++)
@@ -1861,7 +1816,7 @@ int main()
 		//printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
 	//printf("using shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
 	//printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
-	total_time += kernel_time / 1000.f;
+		total_time += kernel_time / 1000.f;
 
 
 
