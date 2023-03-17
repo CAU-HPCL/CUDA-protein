@@ -1291,7 +1291,7 @@ int main()
 		cudaEventRecord(d_end);
 		cudaEventSynchronize(d_end);
 		cudaEventElapsedTime(&kernel_time, d_start, d_end);
-		total_time += kernel_time;
+		total_time += kernel_time / 1000.f;
 
 
 	cudaEventRecord(d_start);
@@ -1304,7 +1304,7 @@ int main()
 	//printf("\nGPU kerenl cycle time : %f second\n\n", kernel_time / 1000.f);
 	//printf("using shared memory size : %lu\n", sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
 	//printf("using contant memory size : %lu\n\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
-	total_time += kernel_time;
+	total_time += kernel_time / 1000.f;
 
 
 	/* memory copy device to host */

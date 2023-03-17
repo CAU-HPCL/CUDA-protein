@@ -1776,7 +1776,7 @@ int main()
 	CHECK_CUDA(cudaEventRecord(d_end))
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-		total_time += kernel_time;
+		total_time += kernel_time / 1000.f;
 
 
 	CHECK_CUDA(cudaEventRecord(d_start))
@@ -1786,7 +1786,7 @@ int main()
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
 		//printf("\nGenerating solution kerenl time : %f seconds\n", kernel_time / 1000.f);
-	total_time += kernel_time;
+	total_time += kernel_time / 1000.f;
 
 
 
@@ -1816,7 +1816,7 @@ int main()
 		//printf("Mutation kernel + Sort kernel time : %f seconds\n", kernel_time / 1000.f);
 	//printf("using shared memory size : %lu\n", sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1));
 	//printf("using contant memory size : %lu\n", sizeof(Codons_weight) + sizeof(char) * 20 + sizeof(Codons) + sizeof(Codons_num) + sizeof(int) * 2 + sizeof(float));
-	total_time += kernel_time;
+	total_time += kernel_time / 1000.f;
 
 
 
