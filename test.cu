@@ -360,17 +360,7 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			}
 			__syncthreads();
 
-			if(j % 2 == 0)
-				j /= 2;
-			else {
-				if (threadIdx.x == 0) {
-					for (int z = 1; z < j; z++)
-						s_obj_compute[0] *= s_obj_compute[z];
-				}
-				__syncthreads();
-				break;
-			}
-
+			j /= 2;
 		}
 
 		if (threadIdx.x == 0) {
@@ -410,16 +400,7 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 				}
 				__syncthreads();
 
-				if (k % 2 == 0)
-					k /= 2;
-				else {
-					if (threadIdx.x == 0) {
-						for (int z = 1; z < k; z++)
-							s_obj_compute[0] += s_obj_compute[z];
-					}
-					__syncthreads();
-					break;
-				}
+				k /= 2;
 			}
 
 			if (threadIdx.x == 0) {
@@ -859,7 +840,7 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 							F_set[front * c_sort_popsize + t_idx] = true;
 							d_sorted_array[count] = t_idx;
 							count += 1;
-							rank_count[front] += 1;							// rank_count �� üũ�� ���� �κ����� ���߿� ������ �� ����!
+							rank_count[front] += 1;							// rank_count 는 체크를 위한 부분으로 나중에 빠지는 것 가능!
 						}
 						atomicExch(&lock, 0);
 					}
@@ -1697,19 +1678,19 @@ int main()
 		void* args[] = { &d_sorted_array, &d_objval, &d_F_set, &d_Sp_set, &d_np, &d_rank_count, &d_sol_struct };
 	k = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
-		//for (i = 0; i < k; i++)
-		//{
-		//	if (i == k - 1 && (total_cycle % sorting_cycle != 0)) {
-		//		mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
-		//			(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, d_sorted_array);
-		//	}
-		//	else {
-		//		mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
-		//			(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, d_sorted_array);
-		//	}
-		//	//	sorting
-		//	CHECK_CUDA(cudaLaunchCooperativeKernel((void*)FastSortSolution, deviceProp.multiProcessorCount * numBlocksPerSm, threadsPerBlock, args, 0))
-		//}
+		for (i = 0; i < k; i++)
+		{
+			if (i == k - 1 && (total_cycle % sorting_cycle != 0)) {
+				mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
+					(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, d_sorted_array);
+			}
+			else {
+				mainKernel << <numBlocks, threadsPerBlock, sizeof(int)* (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1) >> >
+					(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, d_sorted_array);
+			}
+			//	sorting
+			CHECK_CUDA(cudaLaunchCooperativeKernel((void*)FastSortSolution, deviceProp.multiProcessorCount * numBlocksPerSm, threadsPerBlock, args, 0))
+		}
 	CHECK_CUDA(cudaEventRecord(d_end))
 		CHECK_CUDA(cudaEventSynchronize(d_end))
 		CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
