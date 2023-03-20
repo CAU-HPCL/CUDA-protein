@@ -354,9 +354,18 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 		__syncthreads();
 
 		j = blockDim.x / 2;
-		while (j != 0) {
+		while (true) {
 			if (threadIdx.x < j) {
 				s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+			}
+			__syncthreads();
+
+			if (j == 1)
+				break;
+
+			if ((j % 2 == 1) && (threadIdx.x == 0))
+			{
+				s_obj_compute[0] *= s_obj_compute[j - 1];
 			}
 			__syncthreads();
 
@@ -394,9 +403,18 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			__syncthreads();
 
 			k = blockDim.x / 2;
-			while (k != 0) {
+			while (true) {
 				if (threadIdx.x < k) {
 					s_obj_compute[threadIdx.x] += s_obj_compute[threadIdx.x + k];
+				}
+				__syncthreads();
+
+				if (k == 1)
+					break;
+
+				if ((k % 2 == 1) && (threadIdx.x == 0))
+				{
+					s_obj_compute[0] += s_obj_compute[k - 1];
 				}
 				__syncthreads();
 
@@ -542,12 +560,24 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	j = blockDim.x / 2;
 	s_lrcs_tid[threadIdx.x] = threadIdx.x;
 	__syncthreads();
-	while (j != 0)
+	while (true)
 	{
 		if (threadIdx.x < j && (s_obj_compute[threadIdx.x + j] > s_obj_compute[threadIdx.x]))
 		{
 			s_obj_compute[threadIdx.x] = s_obj_compute[threadIdx.x + j];
 			s_lrcs_tid[threadIdx.x] = s_lrcs_tid[threadIdx.x + j];
+		}
+		__syncthreads();
+
+		if (j == 1)
+			break;
+
+		if ((j % 2 == 1) && (threadIdx.x == 0))
+		{
+			if (s_obj_compute[j - 1] > s_obj_compute[0]) {
+				s_obj_compute[0] = s_obj_compute[j - 1];
+				s_lrcs_tid[0] = s_lrcs_tid[j - 1];
+			}
 		}
 		__syncthreads();
 
@@ -1162,9 +1192,18 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 			__syncthreads();
 
 			j = blockDim.x / 2;
-			while (j != 0) {
+			while (true) {
 				if (threadIdx.x < j) {
 					s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+				}
+				__syncthreads();
+
+				if (j == 1)
+					break;
+
+				if ((j % 2 == 1) && (threadIdx.x == 0))
+				{
+					s_obj_compute[0] *= s_obj_compute[j - 1];
 				}
 				__syncthreads();
 
@@ -1201,9 +1240,18 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 				__syncthreads();
 
 				k = blockDim.x / 2;
-				while (k != 0) {
+				while (true) {
 					if (threadIdx.x < k) {
 						s_obj_compute[threadIdx.x] += s_obj_compute[threadIdx.x + k];
+					}
+					__syncthreads();
+
+					if (k == 1)
+						break;
+
+					if ((k % 2 == 1) && (threadIdx.x == 0))
+					{
+						s_obj_compute[0] += s_obj_compute[k - 1];
 					}
 					__syncthreads();
 
@@ -1349,12 +1397,24 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 		j = blockDim.x / 2;
 		s_lrcs_tid[threadIdx.x] = threadIdx.x;
 		__syncthreads();
-		while (j != 0)
+		while (true)
 		{
-			if (threadIdx.x < j && s_obj_compute[threadIdx.x + j] > s_obj_compute[threadIdx.x])
+			if (threadIdx.x < j && (s_obj_compute[threadIdx.x + j] > s_obj_compute[threadIdx.x]))
 			{
 				s_obj_compute[threadIdx.x] = s_obj_compute[threadIdx.x + j];
 				s_lrcs_tid[threadIdx.x] = s_lrcs_tid[threadIdx.x + j];
+			}
+			__syncthreads();
+
+			if (j == 1)
+				break;
+
+			if ((j % 2 == 1) && (threadIdx.x == 0))
+			{
+				if (s_obj_compute[j - 1] > s_obj_compute[0]) {
+					s_obj_compute[0] = s_obj_compute[j - 1];
+					s_lrcs_tid[0] = s_lrcs_tid[j - 1];
+				}
 			}
 			__syncthreads();
 
