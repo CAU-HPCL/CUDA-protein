@@ -389,7 +389,7 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 
 	/* calculate mHD */
 	num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
-	for (i = 0; i < c_cds_num; i++) {
+	for (i = 0; i < c_cds_num - 1; i++) {
 		for (j = i + 1; j < c_cds_num; j++) {
 			s_obj_compute[threadIdx.x] = 0;
 
@@ -1038,7 +1038,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 	ptr_target_lrcsval = s_sol2_lrcsval;
 
 
-	num_partition = (c_len_amino_seq % blockDim.x == 0) ? c_len_amino_seq / blockDim.x : c_len_amino_seq / blockDim.x + 1;
+	num_partition = (c_len_amino_seq % blockDim.x == 0) ? (c_len_amino_seq / blockDim.x) : (c_len_amino_seq / blockDim.x) + 1;
 	for (i = 0; i < num_partition; i++) {
 		idx = blockDim.x * i + threadIdx.x;
 		if (idx < c_len_amino_seq) {
@@ -1150,7 +1150,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 
 		case 3:
 			seq_idx = ptr_origin_lrcsval[P] / CODON_SIZE + threadIdx.x;
-			while (seq_idx <= (ptr_origin_lrcsval[P] + ptr_origin_lrcsval[L] - 1) / CODON_SIZE)
+			while (seq_idx <= ((ptr_origin_lrcsval[P] + ptr_origin_lrcsval[L] - 1) / CODON_SIZE))
 			{
 				pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE],
 					&ptr_target_sol[len_cds * ptr_origin_objidx[_MLRCS * 2] + seq_idx * CODON_SIZE], c_codons_num[s_amino_seq_idx[seq_idx]]);
@@ -1226,7 +1226,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 
 		/* calculate mHD */
 		num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
-		for (i = 0; i < c_cds_num; i++) {
+		for (i = 0; i < c_cds_num - 1; i++) {
 			for (j = i + 1; j < c_cds_num; j++) {
 				s_obj_compute[threadIdx.x] = 0;
 
@@ -1462,7 +1462,7 @@ __global__ void mainKernel(curandStateXORWOW* state, const char* d_amino_seq_idx
 			ptr_target_objidx = s_sol1_objidx;
 			ptr_target_lrcsval = s_sol1_lrcsval;
 		}
-
+		__syncthreads();
 	}
 
 
