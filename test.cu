@@ -12,6 +12,9 @@
 #include <cuda.h>
 #include <cooperative_groups.h>
 
+using namespace cooperative_groups;
+
+
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
@@ -684,43 +687,45 @@ If we input number of threads and sorting function into cudaOccupancyMaxActiveBl
 */
 __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, bool* F_set, bool* Sp_set, int* np, int* rank_count, Sol* sol_struct)
 {
-	cooperative_groups::grid_group grid = cooperative_groups::this_grid();
+	grid_group grid = this_grid();
+	thread_block block = this_thread_block();
+
 	int id;
 	int i, j, k;
 	int b_idx, t_idx;
 	int block_partition, thread_partition;
 
-	//int g_idx;
-	//int grid_partition;
 	int sol_idx;
 	int sec1, sec2;
+	
 
-	if (blockIdx.x == 0 && threadIdx.x == 0)
+
+	if (grid.thread_rank() == 0)
 	{
 		front = 0;
 		count = 0;
 		sorting_idx = 0;
 	}
 
-	id = blockDim.x * blockIdx.x + threadIdx.x;
-	//grid_partition = (c_sort_popsize % (gridDim.x * blockDim.x) == 0) ? c_sort_popsize / (gridDim.x * blockDim.x) : c_sort_popsize / (gridDim.x * blockDim.x) + 1;
-	block_partition = (c_sort_popsize % gridDim.x == 0) ? (c_sort_popsize / gridDim.x) : (c_sort_popsize / gridDim.x + 1);
-	thread_partition = (c_sort_popsize % blockDim.x == 0) ? (c_sort_popsize / blockDim.x) : (c_sort_popsize / blockDim.x + 1);
+	id = grid.num_blocks() * grid.block_rank() + block.thread_rank();
+	block_partition = (c_sort_popsize % grid.num_blocks() == 0) ? (c_sort_popsize / grid.num_blocks()) : (c_sort_popsize / grid.num_blocks()) + 1;
+	thread_partition = (c_sort_popsize % block.size() == 0) ? (c_sort_popsize / block.size()) : (c_sort_popsize / block.size()) + 1;
+
 
 	/* Initialize F_set & Sp_set <- false & np <- 0 */
 	for (i = 0; i < block_partition; i++)
 	{
-		b_idx = gridDim.x * i + blockIdx.x;
+		b_idx = grid.num_blocks() * i + grid.block_rank();
 		if (b_idx < c_sort_popsize)
 		{
-			if (threadIdx.x == 0) {
+			if (block.thread_rank() == 0) {
 				rank_count[b_idx] = 0;
 				np[b_idx] = 0;
 			}
 
 			for (j = 0; j < thread_partition; j++)
 			{
-				t_idx = blockDim.x * j + threadIdx.x;
+				t_idx = block.size() * j + block.thread_rank();
 				if (t_idx < c_sort_popsize)
 				{
 					F_set[b_idx * c_sort_popsize + t_idx] = false;
@@ -735,27 +740,29 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 	/* -------------------- 1st front setting -------------------- */
 	for (i = 0; i < block_partition; i++)
 	{
-		b_idx = gridDim.x * i + blockIdx.x;
+		b_idx = grid.num_blocks() * i + grid.block_rank();
 		if (b_idx < c_sort_popsize)
 		{
 			for (j = 0; j < thread_partition; j++)
 			{
-				t_idx = blockDim.x * j + threadIdx.x;
+				t_idx = block.size() * j + block.thread_rank();
 				if (t_idx < c_sort_popsize)
 				{
 					if (b_idx != t_idx)
 					{
-						if (ParetoComparison(&d_objval[b_idx * OBJECTIVE_NUM], &d_objval[t_idx * OBJECTIVE_NUM]))
+						if (ParetoComparison(&d_objval[b_idx * OBJECTIVE_NUM], &d_objval[t_idx * OBJECTIVE_NUM])) {
 							Sp_set[b_idx * c_sort_popsize + t_idx] = true;
-						else if (ParetoComparison(&d_objval[t_idx * OBJECTIVE_NUM], &d_objval[b_idx * OBJECTIVE_NUM]))
+						}
+						else if (ParetoComparison(&d_objval[t_idx * OBJECTIVE_NUM], &d_objval[b_idx * OBJECTIVE_NUM])) {
 							atomicAdd(&np[b_idx], 1);
+						}
 					}
 				}
 			}
 		}
-		__syncthreads();
+		block.sync();
 
-		if (threadIdx.x == 0 && b_idx < c_sort_popsize && np[b_idx] == 0)
+		if (block.thread_rank() == 0 && b_idx < c_sort_popsize && np[b_idx] == 0)
 		{
 			F_set[b_idx] = true;
 			while (atomicCAS(&lock, 0, 1) != 0);
@@ -764,10 +771,12 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 			rank_count[front] += 1;
 			atomicExch(&lock, 0);
 		}
+		block.sync();
+
 	}
 	grid.sync();
 
-
+#if 0
 	sol_idx = 0;
 	// crowding distance sort
 	if (count > (c_sort_popsize / 2))
@@ -847,21 +856,23 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 
 		return;
 	}
-
+#endif
 
 	/* -------------------- non dominated sort  -------------------- */
-	if (blockIdx.x == 0 && threadIdx.x == 0)
+	if (grid.thread_rank() == 0) {
 		front += 1;
+	}
 	grid.sync();
 	for (k = 0; k < c_sort_popsize - 1; k++) {
+		
 		for (i = 0; i < block_partition; i++)
 		{
-			b_idx = gridDim.x * i + blockIdx.x;
+			b_idx = grid.num_blocks() * i + grid.block_rank();
 			if (b_idx < c_sort_popsize && F_set[(front - 1) * c_sort_popsize + b_idx])
 			{
 				for (j = 0; j < thread_partition; j++)
 				{
-					t_idx = blockDim.x * j + threadIdx.x;
+					t_idx = block.size() * j + block.thread_rank();
 					if (t_idx < c_sort_popsize && Sp_set[b_idx * c_sort_popsize + t_idx])
 					{
 						while (atomicCAS(&lock, 0, 1) != 0);
@@ -876,17 +887,20 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 					}
 				}
 			}
+			block.sync();
 		}
 		grid.sync();
+
 		if (count > (c_sort_popsize / 2))
 			break;
-		if (blockIdx.x == 0 && threadIdx.x == 0)
+		
+		if (grid.thread_rank() == 0) 
 			front += 1;
+		
 		grid.sync();
 	}
 
-
-
+#if 0
 	// crowding distance sort
 	// write solution to global memory Sol
 	if (id < c_sort_popsize && F_set[front * c_sort_popsize + id]) {
@@ -960,7 +974,8 @@ __global__ void FastSortSolution(int* d_sorted_array, const float* d_objval, boo
 	if (id < rank_count[front]) {
 		d_sorted_array[count - rank_count[front] + id] = sol_struct[id].sol_idx;
 	}
-
+#endif
+	
 
 	return;
 }
@@ -1524,6 +1539,7 @@ int main()
 	int maxRegisterPerProcessor;
 	int maxRegisterPerBlock;
 	int totalMultiProcessor;
+	int supportsCoopLaunch = 0;
 	cudaDeviceProp deviceProp;
 
 	CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, dev))
@@ -1533,6 +1549,7 @@ int main()
 		CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerProcessor, cudaDevAttrMaxRegistersPerMultiprocessor, dev))
 		CHECK_CUDA(cudaDeviceGetAttribute(&maxRegisterPerBlock, cudaDevAttrMaxRegistersPerBlock, dev))
 		CHECK_CUDA(cudaDeviceGetAttribute(&totalMultiProcessor, cudaDevAttrMultiProcessorCount, dev))
+		CHECK_CUDA(cudaDeviceGetAttribute(&supportsCoopLaunch, cudaDevAttrCooperativeLaunch, dev))
 
 		printf("Device #%d:\n", dev);
 	printf("Name: %s\n", deviceProp.name);
@@ -1549,6 +1566,9 @@ int main()
 	printf("Maximum number of registers per SM: %d\n", maxRegisterPerProcessor);
 	printf("Maximum number of registers per block: %d\n", maxRegisterPerBlock);
 	printf("Total number of SM in device: %d\n", totalMultiProcessor);
+	
+	if (supportsCoopLaunch)
+		printf("This device supports cudaLaunchCooperativeKernel\n");
 	printf("\n");
 
 	char input_file[32];
@@ -1749,7 +1769,7 @@ int main()
 					(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, d_sorted_array);
 			}
 			//	sorting
-			CHECK_CUDA(cudaLaunchCooperativeKernel((void*)FastSortSolution, deviceProp.multiProcessorCount * numBlocksPerSm, threadsPerBlock, args, 0))
+			CHECK_CUDA(cudaLaunchCooperativeKernel((void*)FastSortSolution, deviceProp.multiProcessorCount * numBlocksPerSm, threadsPerBlock, args))
 		}
 	CHECK_CUDA(cudaEventRecord(d_end))
 		CHECK_CUDA(cudaEventSynchronize(d_end))
