@@ -820,8 +820,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
             if (threadIdx.x == 0 && np[b_idx] == 0)
             {
                 F_set[b_idx] = true;
-                while (atomicCAS(&lock, 0, 1) != 0)
-                    ;
+                while (atomicCAS(&lock, 0, 1) != 0);
                 d_sorted_array[count] = b_idx;
                 count += 1;
                 rank_count[front] += 1;
@@ -838,8 +837,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         // write solution to global memory Sol
         if (g.thread_rank() < c_sort_popsize && F_set[front * c_sort_popsize + g.thread_rank()])
         {
-            while (atomicCAS(&lock, 0, 1) != 0)
-                ;
+            while (atomicCAS(&lock, 0, 1) != 0);
             sol_idx = sorting_idx++;
             atomicExch(&lock, 0);
             sol_struct[sol_idx].sol_idx = g.thread_rank();
@@ -963,8 +961,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
                     t_idx = blockDim.x * j + threadIdx.x;
                     if (t_idx < c_sort_popsize && Sp_set[b_idx * c_sort_popsize + t_idx])
                     {
-                        while (atomicCAS(&lock, 0, 1) != 0)
-                            ;
+                        while (atomicCAS(&lock, 0, 1) != 0);
                         np[t_idx] -= 1;
                         if (np[t_idx] == 0)
                         {
@@ -991,8 +988,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
     // write solution to global memory Sol
     if (g.thread_rank() < c_sort_popsize && F_set[front * c_sort_popsize + g.thread_rank()])
     {
-        while (atomicCAS(&lock, 0, 1) != 0)
-            ;
+        while (atomicCAS(&lock, 0, 1) != 0);
         sol_idx = sorting_idx++;
         atomicExch(&lock, 0);
         sol_struct[sol_idx].sol_idx = g.thread_rank();
@@ -1097,6 +1093,10 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         }
     }
 
+    if(g.thread_rank() == 0){
+        for(i=0;i<(c_sort_popsize/2);i++)
+            printf("%d ",d_sorted_array[i]);
+    }
     return;
 }
 
