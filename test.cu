@@ -10,7 +10,7 @@
 #include <device_launch_parameters.h>
 #include <curand_kernel.h>
 #include <cuda.h>
-#include <cooperative_groups.h>
+//#include <cooperative_groups.h>
 
 #define _CRT_SECURE_NO_WARINGS
 
@@ -31,7 +31,7 @@
 
 #define RANDOM 0
 #define UPPER 1
-// #define LOWER 2
+#define LOWER 2
 
 #define CODON_SIZE 3
 #define OBJECTIVE_NUM 3
@@ -201,7 +201,7 @@ __device__ void mutation(curandStateXORWOW *state, const char *codon_info, char 
 		}
 		break;
 
-		/*case LOWER:
+		case LOWER:
 			new_idx = (char)(curand_uniform(state) * origin_pos);
 			if (cd_prob <= mprob && origin_pos != 0) {
 				while (new_idx == origin_pos) {
@@ -211,7 +211,7 @@ __device__ void mutation(curandStateXORWOW *state, const char *codon_info, char 
 				target[1] = codon_info[new_idx * CODON_SIZE + 1];
 				target[2] = codon_info[new_idx * CODON_SIZE + 2];
 			}
-			break;*/
+			break;
 	}
 
 	return;
@@ -248,7 +248,7 @@ Afeter complete GenSolution in global memory
 d_sorted_array = 0, 1, .. n - 1
 and solution, etc...
 */
-__global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_idx, char *d_pop, float *d_objval, char *d_objidx, int *d_lrcsval)
+__global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_idx, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval, int* d_sorted_array, const int limit, const float lowest_mcai)
 {
 	curandStateXORWOW localState;
 	int id;
@@ -260,49 +260,54 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 	char lrcs_i, lrcs_j;
 	int lrcs_p, lrcs_q, lrcs_l, tmp_l;
 
+
+	float section_low, section_high, adjust_prob;
+	char direct;
+	int cnt;
+
+
 	id = blockDim.x * blockIdx.x + threadIdx.x;
 	localState = state[id];
 	len_cds = c_len_amino_seq * CODON_SIZE;
 	len_sol = len_cds * c_cds_num;
 
 	extern __shared__ int smem[];
-	__shared__ int *s_lrcs_tid;
-	__shared__ int *s_sol_lrcsval;
-	__shared__ float *s_sol_objval;
-	__shared__ float *s_obj_compute;
-	__shared__ char *s_amino_seq_idx;
-	__shared__ char *s_sol;
-	__shared__ char *s_sol_objidx;
+	__shared__ int* s_lrcs_tid;
+	__shared__ int* s_sol_lrcsval;
+	__shared__ float* s_sol_objval;
+	__shared__ float* s_obj_compute;
+	__shared__ char* s_amino_seq_idx;
+	__shared__ char* s_sol;
+	__shared__ char* s_sol_objidx;
 
 	s_lrcs_tid = smem;
-	s_sol_lrcsval = (int *)&s_lrcs_tid[blockDim.x];
-	s_sol_objval = (float *)&s_sol_lrcsval[3];
-	s_obj_compute = (float *)&s_sol_objval[OBJECTIVE_NUM];
-	s_amino_seq_idx = (char *)&s_obj_compute[blockDim.x];
-	s_sol = (char *)&s_amino_seq_idx[c_len_amino_seq];
-	s_sol_objidx = (char *)&s_sol[len_sol];
+	s_sol_lrcsval = (int*)&s_lrcs_tid[blockDim.x];
+	s_sol_objval = (float*)&s_sol_lrcsval[3];
+	s_obj_compute = (float*)&s_sol_objval[OBJECTIVE_NUM];
+	s_amino_seq_idx = (char*)&s_obj_compute[blockDim.x];
+	s_sol = (char*)&s_amino_seq_idx[c_len_amino_seq];
+	s_sol_objidx = (char*)&s_sol[len_sol];
 
-	num_partition = (c_len_amino_seq % blockDim.x == 0) ? (c_len_amino_seq / blockDim.x) : (c_len_amino_seq / blockDim.x) + 1;
-	for (i = 0; i < num_partition; i++)
-	{
+
+	num_partition = (c_len_amino_seq % blockDim.x == 0) ? c_len_amino_seq / blockDim.x : c_len_amino_seq / blockDim.x + 1;
+	for (i = 0; i < num_partition; i++) {
 		idx = blockDim.x * i + threadIdx.x;
-		if (idx < c_len_amino_seq)
-		{
+		if (idx < c_len_amino_seq) {
 			s_amino_seq_idx[idx] = d_amino_seq_idx[idx];
 		}
 	}
 	__syncthreads();
 	// --------------------------------------------------------------------------------------
 
-	/* initialize solution */
+
+	/* -------------------- initialize solution -------------------- */
+
 	if (blockIdx.x == gridDim.x - 1)
 	{
 		num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
-		for (i = 0; i < num_partition; i++)
-		{
+		for (i = 0; i < num_partition; i++) {
 			idx = blockDim.x * i + threadIdx.x;
-			if (idx < c_len_amino_seq * c_cds_num)
-			{
+			if (idx < c_len_amino_seq * c_cds_num) {
 				seq_idx = idx % c_len_amino_seq;
 
 				pos = c_codons_num[s_amino_seq_idx[seq_idx]] - 1;
@@ -316,18 +321,14 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 			}
 		}
 	}
-	else
-	{
+	else {
 		num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
-		for (i = 0; i < num_partition; i++)
-		{
+		for (i = 0; i < num_partition; i++) {
 			idx = blockDim.x * i + threadIdx.x;
-			if (idx < c_len_amino_seq * c_cds_num)
-			{
+			if (idx < c_len_amino_seq * c_cds_num) {
 				seq_idx = idx % c_len_amino_seq;
 
-				do
-				{
+				do {
 					pos = (char)(curand_uniform(&localState) * c_codons_num[s_amino_seq_idx[seq_idx]]);
 				} while (pos == c_codons_num[s_amino_seq_idx[seq_idx]]);
 
@@ -342,29 +343,25 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 	}
 	__syncthreads();
 
+
 	/* calculate mCAI */
 	num_partition = (c_len_amino_seq % blockDim.x == 0) ? (c_len_amino_seq / blockDim.x) : (c_len_amino_seq / blockDim.x) + 1;
-	for (i = 0; i < c_cds_num; i++)
-	{
+	for (i = 0; i < c_cds_num; i++) {
 		s_obj_compute[threadIdx.x] = 1;
 
-		for (j = 0; j < num_partition; j++)
-		{
+		for (j = 0; j < num_partition; j++) {
 			seq_idx = blockDim.x * j + threadIdx.x;
-			if (seq_idx < c_len_amino_seq)
-			{
+			if (seq_idx < c_len_amino_seq) {
 				pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[len_cds * i + seq_idx * CODON_SIZE],
-								c_codons_num[s_amino_seq_idx[seq_idx]]);
+					c_codons_num[s_amino_seq_idx[seq_idx]]);
 				s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / c_len_amino_seq);
 			}
 		}
 		__syncthreads();
 
 		j = blockDim.x / 2;
-		while (true)
-		{
-			if (threadIdx.x < j)
-			{
+		while (true) {
+			if (threadIdx.x < j) {
 				s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
 			}
 			__syncthreads();
@@ -381,46 +378,146 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 			j /= 2;
 		}
 
-		if (threadIdx.x == 0)
-		{
-			if (i == 0)
-			{
+		if (threadIdx.x == 0) {
+			if (i == 0) {
 				s_sol_objval[_mCAI] = s_obj_compute[0];
 				s_sol_objidx[_mCAI * 2] = i;
 			}
-			else if (s_obj_compute[0] <= s_sol_objval[_mCAI])
-			{
+			else if (s_obj_compute[0] <= s_sol_objval[_mCAI]) {
 				s_sol_objval[_mCAI] = s_obj_compute[0];
 				s_sol_objidx[_mCAI * 2] = i;
 			}
 		}
 		__syncthreads();
+
 	}
+
+
+
+	/* ------------------------------ intentional mutation initail solution for adjusting mCAI ------------------------------ */
+	section_low = lowest_mcai + (1 - lowest_mcai) / gridDim.x * (blockIdx.x % gridDim.x);
+	section_high = lowest_mcai + (1 - lowest_mcai) / gridDim.x * (blockIdx.x % gridDim.x + 1);
+
+	/* muatate */
+	adjust_prob = 1.f;
+	cnt = 0;
+	// mutate direction
+	if (s_sol_objval[_mCAI] < section_low)
+		direct = UPPER;
+	else if (s_sol_objval[_mCAI] > section_high)
+		direct = LOWER;
+	if (blockIdx.x != gridDim.x - 1) {
+		while (cnt < limit && (s_sol_objval[_mCAI] < section_low || s_sol_objval[_mCAI] > section_high))
+		{
+			if (s_sol_objval[_mCAI] < section_low) {
+				if (direct != UPPER) {
+					direct = UPPER;
+					adjust_prob /= 2;
+				}
+				num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
+				for (i = 0; i < num_partition; i++) {
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx < c_len_amino_seq * c_cds_num) {
+						seq_idx = idx % c_len_amino_seq;
+
+						pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
+							c_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
+							c_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
+					}
+				}
+			}
+			else {
+				if (direct != LOWER) {
+					direct = LOWER;
+					adjust_prob /= 2;
+				}
+				num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
+				for (i = 0; i < num_partition; i++) {
+					idx = blockDim.x * i + threadIdx.x;
+					if (idx < c_len_amino_seq * c_cds_num) {
+						seq_idx = idx % c_len_amino_seq;
+
+						pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
+							c_codons_num[s_amino_seq_idx[seq_idx]]);
+						mutation(&localState, &c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
+							c_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
+					}
+				}
+			}
+
+			/* calculate mCAI value */
+			num_partition = (c_len_amino_seq % blockDim.x == 0) ? (c_len_amino_seq / blockDim.x) : (c_len_amino_seq / blockDim.x) + 1;
+			for (i = 0; i < c_cds_num; i++) {
+				s_obj_compute[threadIdx.x] = 1;
+
+				for (j = 0; j < num_partition; j++) {
+					seq_idx = blockDim.x * j + threadIdx.x;
+					if (seq_idx < c_len_amino_seq) {
+						pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[len_cds * i + seq_idx * CODON_SIZE],
+							c_codons_num[s_amino_seq_idx[seq_idx]]);
+						s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / c_len_amino_seq);
+					}
+				}
+				__syncthreads();
+
+				j = blockDim.x / 2;
+				while (true) {
+					if (threadIdx.x < j) {
+						s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
+					}
+					__syncthreads();
+
+					if (j == 1)
+						break;
+
+					if ((j % 2 == 1) && (threadIdx.x == 0))
+					{
+						s_obj_compute[0] *= s_obj_compute[j - 1];
+					}
+					__syncthreads();
+
+					j /= 2;
+				}
+
+				if (threadIdx.x == 0) {
+					if (i == 0) {
+						s_sol_objval[_mCAI] = s_obj_compute[0];
+						s_sol_objidx[_mCAI * 2] = i;
+					}
+					else if (s_obj_compute[0] <= s_sol_objval[_mCAI]) {
+						s_sol_objval[_mCAI] = s_obj_compute[0];
+						s_sol_objidx[_mCAI * 2] = i;
+					}
+				}
+				__syncthreads();
+
+			}
+			cnt++;
+		}
+	}
+	/* ------------------------------ end of intational muation ------------------------------ */
+
+
 
 	/* calculate mHD */
 	num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
-	for (i = 0; i < c_cds_num - 1; i++)
-	{
-		for (j = i + 1; j < c_cds_num; j++)
-		{
+	for (i = 0; i < c_cds_num - 1; i++) {
+		for (j = i + 1; j < c_cds_num; j++) {
 			s_obj_compute[threadIdx.x] = 0;
 
-			for (k = 0; k < num_partition; k++)
-			{
+			for (k = 0; k < num_partition; k++) {
 				seq_idx = blockDim.x * k + threadIdx.x;
 
-				if (seq_idx < len_cds && (s_sol[len_cds * i + seq_idx] != s_sol[len_cds * j + seq_idx]))
-				{
+				if (seq_idx < len_cds && (s_sol[len_cds * i + seq_idx] != s_sol[len_cds * j + seq_idx])) {
 					s_obj_compute[threadIdx.x] += 1;
 				}
 			}
 			__syncthreads();
 
 			k = blockDim.x / 2;
-			while (true)
-			{
-				if (threadIdx.x < k)
-				{
+			while (true) {
+				if (threadIdx.x < k) {
 					s_obj_compute[threadIdx.x] += s_obj_compute[threadIdx.x + k];
 				}
 				__syncthreads();
@@ -437,52 +534,44 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 				k /= 2;
 			}
 
-			if (threadIdx.x == 0)
-			{
-				if (i == 0 && j == 1)
-				{
+			if (threadIdx.x == 0) {
+				if (i == 0 && j == 1) {
 					s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
 					s_sol_objidx[_mHD * 2] = i;
 					s_sol_objidx[_mHD * 2 + 1] = j;
 				}
-				else if ((s_obj_compute[0] / len_cds) <= s_sol_objval[_mHD])
-				{
+				else if ((s_obj_compute[0] / len_cds) <= s_sol_objval[_mHD]) {
 					s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
 					s_sol_objidx[_mHD * 2] = i;
 					s_sol_objidx[_mHD * 2 + 1] = j;
 				}
 			}
 			__syncthreads();
+
 		}
 	}
 
 	/* calculate MLRCS */
 	s_obj_compute[threadIdx.x] = NOT_FOUND;
 	lrcs_l = 0;
-	for (i = 0; i < c_cds_num; i++)
-	{
-		for (j = i; j < c_cds_num; j++)
-		{
+	for (i = 0; i < c_cds_num; i++) {
+		for (j = i; j < c_cds_num; j++) {
 			idx = threadIdx.x;
 
 			if (i == j)
 			{
 				while (idx < 2 * len_cds + 1)
 				{
-					if (idx < len_cds + 1)
-					{
+					if (idx < len_cds + 1) {
 						l = idx + 1;
 						seq_idx = len_cds - l;
 
-						for (k = 0; k < l; k++)
-						{
+						for (k = 0; k < l; k++) {
 							if (k == 0 || (seq_idx == -1))
 								tmp_l = 0;
-							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1])
-							{
+							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1]) {
 								tmp_l++;
-								if (tmp_l >= lrcs_l)
-								{
+								if (tmp_l >= lrcs_l) {
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = seq_idx + k + 1 - lrcs_l;
@@ -495,20 +584,17 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 								tmp_l = 0;
 						}
 					}
-					else
-					{
+					else {
 						l = 2 * len_cds + 1 - idx;
 						seq_idx = len_cds - l;
 
-						for (k = 0; k < l; k++)
-						{
+						for (k = 0; k < l; k++) {
 							if (k == 0)
 								tmp_l = 0;
 							else if (s_sol[len_cds * i + k - 1] == s_sol[len_cds * j + seq_idx + k])
 							{
 								tmp_l++;
-								if (tmp_l >= lrcs_l)
-								{
+								if (tmp_l >= lrcs_l) {
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = k - lrcs_l;
@@ -520,6 +606,7 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 							else
 								tmp_l = 0;
 						}
+
 					}
 
 					idx += blockDim.x;
@@ -529,19 +616,15 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 			{
 				while (idx < 2 * len_cds + 1)
 				{
-					if (idx < len_cds + 1)
-					{
+					if (idx < len_cds + 1) {
 						l = idx + 1;
 						seq_idx = len_cds - l;
-						for (k = 0; k < l; k++)
-						{
+						for (k = 0; k < l; k++) {
 							if (k == 0)
 								tmp_l = 0;
-							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1])
-							{
+							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1]) {
 								tmp_l++;
-								if (tmp_l >= lrcs_l)
-								{
+								if (tmp_l >= lrcs_l) {
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = seq_idx + k + 1 - lrcs_l;
@@ -554,20 +637,17 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 								tmp_l = 0;
 						}
 					}
-					else
-					{
+					else {
 						l = 2 * len_cds + 1 - idx;
 						seq_idx = len_cds - l;
 
-						for (k = 0; k < l; k++)
-						{
+						for (k = 0; k < l; k++) {
 							if (k == 0)
 								tmp_l = 0;
 							else if (s_sol[len_cds * i + k - 1] == s_sol[len_cds * j + seq_idx + k])
 							{
 								tmp_l++;
-								if (tmp_l >= lrcs_l)
-								{
+								if (tmp_l >= lrcs_l) {
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = k - lrcs_l;
@@ -579,11 +659,13 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 							else
 								tmp_l = 0;
 						}
+
 					}
 
 					idx += blockDim.x;
 				}
 			}
+
 		}
 	}
 	__syncthreads();
@@ -605,8 +687,7 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 
 		if ((j % 2 == 1) && (threadIdx.x == 0))
 		{
-			if (s_obj_compute[j - 1] > s_obj_compute[0])
-			{
+			if (s_obj_compute[j - 1] > s_obj_compute[0]) {
 				s_obj_compute[0] = s_obj_compute[j - 1];
 				s_lrcs_tid[0] = s_lrcs_tid[j - 1];
 			}
@@ -627,11 +708,12 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 		s_sol_objidx[_MLRCS * 2 + 1] = lrcs_j;
 	}
 	__syncthreads();
+	/* -------------------- end of initialize -------------------- */
+
 
 	/* copy from shared memory to global memory */
 	num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
-	for (i = 0; i < num_partition; i++)
-	{
+	for (i = 0; i < num_partition; i++) {
 		idx = blockDim.x * i + threadIdx.x;
 		if (idx < len_sol)
 			d_pop[blockIdx.x * len_sol + idx] = s_sol[idx];
@@ -652,6 +734,9 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 		d_lrcsval[blockIdx.x * 3 + P] = s_sol_lrcsval[P];
 		d_lrcsval[blockIdx.x * 3 + Q] = s_sol_lrcsval[Q];
 		d_lrcsval[blockIdx.x * 3 + L] = s_sol_lrcsval[L];
+
+		/* write d_sorted_array */
+		d_sorted_array[blockIdx.x] = blockIdx.x;
 	}
 
 	state[id] = localState;
@@ -711,7 +796,7 @@ __device__ void CompDownCrowd(Sol *s1, Sol *s2)
 Based on sorting methods on NSGA2 paper
 If we input number of threads and sorting function into cudaOccupancyMaxActiveBlocksPerMultiprocessor(), we get number of blocks available to use
 */
-__global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set, char *d_pop, float *d_objval, char *d_objidx, int *d_lrcsval, char *tmp_pop, float *tmp_objval, char *tmp_objidx, int *tmp_lrcsval)
+__global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set, char *d_pop, float *d_objval, char *d_objidx, int *d_lrcsval)
 {
 	int i, j;
 	int sol_idx;
@@ -734,34 +819,10 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 	len_cds = c_len_amino_seq * OBJECTIVE_NUM;
 	len_sol = len_cds * c_cds_num;
 
-	/* copy population to global memory temp */
-	for (i = 0; i < len_sol; i++)
-	{
-		tmp_pop[threadIdx.x * len_sol + i] = d_pop[threadIdx.x * len_sol + i];
-	}
-	tmp_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
-	tmp_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD];
-	tmp_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
-	tmp_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2] = d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2];
-	tmp_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2] = d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2];
-	tmp_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2 + 1] = d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2 + 1];
-	tmp_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2] = d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2];
-	tmp_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1] = d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1];
-	tmp_lrcsval[threadIdx.x * 3 + P] = d_lrcsval[threadIdx.x * 3 + P];
-	tmp_lrcsval[threadIdx.x * 3 + Q] = d_lrcsval[threadIdx.x * 3 + Q];
-	tmp_lrcsval[threadIdx.x * 3 + L] = d_lrcsval[threadIdx.x * 3 + L];
-
 	/* copy objective value from global memory to shared memory */
 	s_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
 	s_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD];
 	s_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
-
-	/* Initialize F_set & Sp_set <- false */
-	for (i = 0; i < c_sort_popsize; i++)
-	{
-		F_set[threadIdx.x * c_sort_popsize + i] = false;
-		Sp_set[threadIdx.x * c_sort_popsize + i] = false;
-	}
 
 	if (threadIdx.x == 0)
 	{
@@ -785,13 +846,15 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 	if (s_np[threadIdx.x] == 0)
 	{
 		F_set[threadIdx.x] = true;
-		while (atomicCAS(&lock, 0, 1) != 0);
+		while (atomicCAS(&lock, 0, 1) != 0)
+			;
 		d_sorted_array[count] = threadIdx.x;
 		count += 1;
 		s_rank_count[front] += 1;
 		atomicExch(&lock, 0);
 	}
 	__syncthreads();
+
 
 	sol_idx = 0;
 	// crowding distance sort
@@ -800,7 +863,8 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 		// write solution to shared memory Sol
 		if (F_set[threadIdx.x])
 		{
-			while (atomicCAS(&lock, 0, 1) != 0);
+			while (atomicCAS(&lock, 0, 1) != 0)
+				;
 			sol_idx = sorting_idx++;
 			atomicExch(&lock, 0);
 			s_sol_struct[sol_idx].sol_idx = threadIdx.x;
@@ -873,26 +937,10 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 		{
 			d_sorted_array[count - s_rank_count[front] + threadIdx.x] = s_sol_struct[threadIdx.x].sol_idx;
 		}
-		__syncthreads();
-
-		for (i = 0; i < len_sol; i++)
-		{
-			d_pop[threadIdx.x * len_sol + i] = tmp_pop[d_sorted_array[threadIdx.x] * len_sol + i];
-		}
-		d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] = tmp_objval[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM + _mCAI];
-		d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] = tmp_objval[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM + _mHD];
-		d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] = tmp_objval[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM + _MLRCS];
-		d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _mCAI * 2];
-		d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _mHD * 2];
-		d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2 + 1] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _mCAI * 2 + 1];
-		d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2];
-		d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1];
-		d_lrcsval[threadIdx.x * 3 + P] = tmp_lrcsval[d_sorted_array[threadIdx.x] * 3 + P];
-		d_lrcsval[threadIdx.x * 3 + Q] = tmp_lrcsval[d_sorted_array[threadIdx.x] * 3 + Q];
-		d_lrcsval[threadIdx.x * 3 + L] = tmp_lrcsval[d_sorted_array[threadIdx.x] * 3 + L];
 
 		return;
 	}
+
 
 	/* -------------------- non dominated sort  -------------------- */
 	if (threadIdx.x == 0)
@@ -931,7 +979,8 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 	// write solution to shared memory Sol
 	if (F_set[front * c_sort_popsize + threadIdx.x])
 	{
-		while (atomicCAS(&lock, 0, 1) != 0);
+		while (atomicCAS(&lock, 0, 1) != 0)
+			;
 		sol_idx = sorting_idx++;
 		atomicExch(&lock, 0);
 		s_sol_struct[sol_idx].sol_idx = threadIdx.x;
@@ -1001,23 +1050,6 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 	{
 		d_sorted_array[count - s_rank_count[front] + threadIdx.x] = s_sol_struct[threadIdx.x].sol_idx;
 	}
-	__syncthreads();
-
-	for (i = 0; i < len_sol; i++)
-	{
-		d_pop[threadIdx.x * len_sol + i] = tmp_pop[d_sorted_array[threadIdx.x] * len_sol + i];
-	}
-	d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] = tmp_objval[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM + _mCAI];
-	d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] = tmp_objval[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM + _mHD];
-	d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] = tmp_objval[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM + _MLRCS];
-	d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _mCAI * 2];
-	d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _mHD * 2];
-	d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2 + 1] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _mCAI * 2 + 1];
-	d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2];
-	d_objidx[threadIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1] = tmp_objidx[d_sorted_array[threadIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1];
-	d_lrcsval[threadIdx.x * 3 + P] = tmp_lrcsval[d_sorted_array[threadIdx.x] * 3 + P];
-	d_lrcsval[threadIdx.x * 3 + Q] = tmp_lrcsval[d_sorted_array[threadIdx.x] * 3 + Q];
-	d_lrcsval[threadIdx.x * 3 + L] = tmp_lrcsval[d_sorted_array[threadIdx.x] * 3 + L];
 
 	return;
 }
@@ -1028,7 +1060,7 @@ Not update solution to global memory state of sorted Just write solution to glob
 This means In global memory solution is not sorted after this function
 If you want soltion is sorted sorted function call and we get sorted array and update solution based on sorted array
 */
-__global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx, char *d_pop, float *d_objval, char *d_objidx, int *d_lrcsval, const int cycle)
+__global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx, char *d_pop, float *d_objval, char *d_objidx, int *d_lrcsval, const int cycle, char *tmp_pop, float *tmp_objval, char *tmp_objidx, int *tmp_lrcsval, int *d_sorted_array)
 {
 	curandStateXORWOW localState;
 	int id;
@@ -1107,24 +1139,24 @@ __global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx
 	{
 		idx = blockDim.x * i + threadIdx.x;
 		if (idx < len_sol)
-			ptr_origin_sol[idx] = d_pop[blockIdx.x * len_sol + idx];
+			ptr_origin_sol[idx] = tmp_pop[d_sorted_array[blockIdx.x] * len_sol + idx];
 	}
 
 	if (threadIdx.x == 0)
 	{
-		ptr_origin_objval[_mCAI] = d_objval[blockIdx.x * OBJECTIVE_NUM + _mCAI];
-		ptr_origin_objval[_mHD] = d_objval[blockIdx.x * OBJECTIVE_NUM + _mHD];
-		ptr_origin_objval[_MLRCS] = d_objval[blockIdx.x * OBJECTIVE_NUM + _MLRCS];
+		ptr_origin_objval[_mCAI] = tmp_objval[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM + _mCAI];
+		ptr_origin_objval[_mHD] = tmp_objval[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM + _mHD];
+		ptr_origin_objval[_MLRCS] = tmp_objval[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM + _MLRCS];
 
-		ptr_origin_objidx[_mCAI * 2] = d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mCAI * 2];
-		ptr_origin_objidx[_mHD * 2] = d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2];
-		ptr_origin_objidx[_mHD * 2 + 1] = d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _mHD * 2 + 1];
-		ptr_origin_objidx[_MLRCS * 2] = d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2];
-		ptr_origin_objidx[_MLRCS * 2 + 1] = d_objidx[blockIdx.x * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1];
+		ptr_origin_objidx[_mCAI * 2] = tmp_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _mCAI * 2];
+		ptr_origin_objidx[_mHD * 2] = tmp_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _mHD * 2];
+		ptr_origin_objidx[_mHD * 2 + 1] = tmp_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _mHD * 2 + 1];
+		ptr_origin_objidx[_MLRCS * 2] = tmp_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2];
+		ptr_origin_objidx[_MLRCS * 2 + 1] = tmp_objidx[d_sorted_array[blockIdx.x] * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1];
 
-		ptr_origin_lrcsval[P] = d_lrcsval[blockIdx.x * 3 + P];
-		ptr_origin_lrcsval[Q] = d_lrcsval[blockIdx.x * 3 + Q];
-		ptr_origin_lrcsval[L] = d_lrcsval[blockIdx.x * 3 + L];
+		ptr_origin_lrcsval[P] = tmp_lrcsval[d_sorted_array[blockIdx.x] * 3 + P];
+		ptr_origin_lrcsval[Q] = tmp_lrcsval[d_sorted_array[blockIdx.x] * 3 + Q];
+		ptr_origin_lrcsval[L] = tmp_lrcsval[d_sorted_array[blockIdx.x] * 3 + L];
 	}
 	__syncthreads();
 
@@ -1651,6 +1683,9 @@ int main()
 	float mprob; // mutation probability
 	float min_dist;
 
+	float lowest_mcai;						// for divide initial solution section
+	int limit;
+
 	char tmp;
 	int i, j, k;
 	int x;
@@ -1719,6 +1754,7 @@ int main()
 		printf("Input mutation probability (0 ~ 1 value) : \n");
 		return EXIT_FAILURE;
 	}
+	printf("input number of limit : "); scanf("%d", &limit);
 	printf("Input thread per block x value --> number of thread  warp size (32) * x : ");
 	scanf("%d", &x);
 	printf("For sorting kernel use number of twice_pop threads per block");
@@ -1777,6 +1813,13 @@ int main()
 		h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
 	}
 
+/* caculate the smallest mCAI value */
+	lowest_mcai = 1.f;
+	for (i = 0; i < len_amino_seq; i++) {
+		lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
+	}
+
+
 	/* host memory allocation */
 	h_pop = (char *)malloc(sizeof(char) * twice_pop * len_sol);
 	h_objval = (float *)malloc(sizeof(float) * twice_pop * OBJECTIVE_NUM);
@@ -1824,29 +1867,33 @@ int main()
 
 	/* initialize solution */
 	CHECK_CUDA(cudaEventRecord(d_start))
-	GenSolution<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval);
+	GenSolution<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, limit, lowest_mcai);
 	CHECK_CUDA(cudaEventRecord(d_end))
 	CHECK_CUDA(cudaEventSynchronize(d_end))
 	CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
 	total_time += kernel_time / 1000.f;
 
-	// int numBlocksPerSm = 0;
-	// CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSm, FastSortSolution, twice_pop, 0))
-	void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_pop, &d_objval, &d_objidx, &d_lrcsval, &tmp_pop, &tmp_objval, &tmp_objidx, &tmp_lrcsval};
+
+	void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_pop, &d_objval, &d_objidx, &d_lrcsval};
 	j = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
 	for (i = 0; i < j; i++)
 	{
+		CHECK_CUDA(cudaMemcpy(tmp_pop, d_pop, sizeof(char) * len_sol * twice_pop, cudaMemcpyDeviceToDevice))
+		CHECK_CUDA(cudaMemcpy(tmp_objval, d_objval, sizeof(float) * OBJECTIVE_NUM * twice_pop, cudaMemcpyDeviceToDevice))
+		CHECK_CUDA(cudaMemcpy(tmp_objidx, d_objidx, sizeof(char) * OBJECTIVE_NUM * 2 * twice_pop, cudaMemcpyDeviceToDevice))
+		CHECK_CUDA(cudaMemcpy(tmp_lrcsval, d_lrcsval, sizeof(int) * 3 * twice_pop, cudaMemcpyDeviceToDevice))
 		if (i == j - 1 && (total_cycle % sorting_cycle != 0))
 		{
-			mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle);
+			mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
 		}
 		else
 		{
-			mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle);
+			mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
 		}
+		CHECK_CUDA(cudaMemset(d_F_set,false,sizeof(bool)*twice_pop * twice_pop))
+		CHECK_CUDA(cudaMemset(d_Sp_set,false,sizeof(bool)*twice_pop * twice_pop))
 		CHECK_CUDA(cudaLaunchKernel((void *)FastSortSolution, 1, twice_pop, args, sizeof(Sol) * twice_pop + sizeof(int) * twice_pop * 2 + sizeof(float) * twice_pop * OBJECTIVE_NUM))
-		// CHECK_CUDA(cudaLaunchCooperativeKernel((void *)FastSortSolution, numBlocksPerSm * deviceProp.multiProcessorCount, twice_pop, args))
 	}
 	CHECK_CUDA(cudaEventRecord(d_end))
 	CHECK_CUDA(cudaEventSynchronize(d_end))

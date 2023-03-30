@@ -769,6 +769,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         }
     }
 
+    block_partition = (c_sort_popsize % gridDim.x == 0) ? (c_sort_popsize / gridDim.x) : (c_sort_popsize / gridDim.x + 1);
     thread_partition = (c_sort_popsize % blockDim.x == 0) ? (c_sort_popsize / blockDim.x) : (c_sort_popsize / blockDim.x + 1);
     /* Initialize F_set & Sp_set <- false & np <- 0 */
     for (i = 0; i < block_partition; i++)
@@ -796,6 +797,8 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
     g.sync();
 
     /* -------------------- 1st front setting -------------------- */
+    block_partition = (c_sort_popsize % gridDim.x == 0) ? (c_sort_popsize / gridDim.x) : (c_sort_popsize / gridDim.x + 1);
+    thread_partition = (c_sort_popsize % blockDim.x == 0) ? (c_sort_popsize / blockDim.x) : (c_sort_popsize / blockDim.x + 1);
     for (i = 0; i < block_partition; i++)
     {
         b_idx = gridDim.x * i + blockIdx.x;
@@ -826,16 +829,18 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
                 rank_count[front] += 1;
                 atomicExch(&lock, 0);
             }
+            tb.sync();
         }
     }
     g.sync();
+
 
     sol_idx = 0;
     // crowding distance sort
     if (count > (c_sort_popsize / 2))
     {
         // write solution to global memory Sol
-        if (g.thread_rank() < c_sort_popsize && F_set[front * c_sort_popsize + g.thread_rank()])
+        if ((g.thread_rank() < c_sort_popsize) && F_set[front * c_sort_popsize + g.thread_rank()])
         {
             while (atomicCAS(&lock, 0, 1) != 0);
             sol_idx = sorting_idx++;
@@ -889,9 +894,10 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         {
             if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < rank_count[front]))
                 CompDownCrowd(&sol_struct[g.thread_rank()], &sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
-            g.sync();
 
             sec2 = sec1 / 2;
+            g.sync();
+            
             while (sec2 != 0)
             {
                 if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < rank_count[front]))
@@ -899,6 +905,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
                 sec2 /= 2;
                 g.sync();
             }
+
             sec1 *= 2;
         }
         g.sync();
@@ -914,7 +921,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         for (i = 0; i < block_partition; i++)
         {
             b_idx = gridDim.x * i + blockIdx.x;
-            if (b_idx < c_sort_popsize)
+            if (b_idx < (c_sort_popsize / 2))
             {
                 for (j = 0; j < thread_partition; j++)
                 {
@@ -945,6 +952,9 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         return;
     }
 
+
+    block_partition = (c_sort_popsize % gridDim.x == 0) ? (c_sort_popsize / gridDim.x) : (c_sort_popsize / gridDim.x + 1);
+    thread_partition = (c_sort_popsize % blockDim.x == 0) ? (c_sort_popsize / blockDim.x) : (c_sort_popsize / blockDim.x + 1);
     /* -------------------- non dominated sort  -------------------- */
     if (g.thread_rank() == 0)
         front += 1;
@@ -985,6 +995,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         g.sync();
     }
 
+    sol_idx = 0;
     // write solution to global memory Sol
     if (g.thread_rank() < c_sort_popsize && F_set[front * c_sort_popsize + g.thread_rank()])
     {
@@ -1040,9 +1051,10 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
     {
         if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < rank_count[front]))
             CompDownCrowd(&sol_struct[g.thread_rank()], &sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
-        g.sync();
 
         sec2 = sec1 / 2;
+        g.sync();
+        
         while (sec2 != 0)
         {
             if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < rank_count[front]))
@@ -1060,12 +1072,14 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
     }
     g.sync();
 
+
+
     block_partition = ((c_sort_popsize / 2) % gridDim.x == 0) ? ((c_sort_popsize / 2) / gridDim.x) : ((c_sort_popsize / 2) / gridDim.x + 1);
     thread_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x + 1);
     for (i = 0; i < block_partition; i++)
     {
         b_idx = gridDim.x * i + blockIdx.x;
-        if (b_idx < c_sort_popsize)
+        if (b_idx < (c_sort_popsize/2))
         {
             for (j = 0; j < thread_partition; j++)
             {
@@ -1093,10 +1107,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         }
     }
 
-    if(g.thread_rank() == 0){
-        for(i=0;i<(c_sort_popsize/2);i++)
-            printf("%d ",d_sorted_array[i]);
-    }
+
     return;
 }
 
@@ -1931,11 +1942,11 @@ int main()
     total_time += kernel_time / 1000.f;
 
     /* memory copy device to host */
-    CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * twice_pop * len_sol, cudaMemcpyDeviceToHost))
-    CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM, cudaMemcpyDeviceToHost))
+    CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * pop_size * len_sol, cudaMemcpyDeviceToHost))
+    CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * pop_size * OBJECTIVE_NUM, cudaMemcpyDeviceToHost))
 
     // for compute hypervolume & minimum distance out process
-    for (i = 0; i < twice_pop; i++)
+    for (i = 0; i < pop_size; i++)
     {
         h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
     }
@@ -1972,7 +1983,7 @@ int main()
     std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
     fp = fopen("test.txt", "w");
     /* for computing hypervolume write file */
-    for (i = 0; i < twice_pop; i++)
+    for (i = 0; i < pop_size; i++)
     {
         fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
     }
