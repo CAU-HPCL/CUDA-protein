@@ -1616,8 +1616,6 @@ int main()
 	int *d_lrcsval;
 	int *d_sorted_array;
 	bool *d_F_set, *d_Sp_set;
-	int *d_np, *d_rank_count;
-	Sol *d_sol_struct;
 
 	char *tmp_pop;
 	float *tmp_objval;
@@ -1739,9 +1737,6 @@ int main()
 	CHECK_CUDA(cudaMalloc((void **)&d_sorted_array, sizeof(int) * twice_pop))
 	CHECK_CUDA(cudaMalloc((void **)&d_F_set, sizeof(bool) * twice_pop * twice_pop))
 	CHECK_CUDA(cudaMalloc((void **)&d_Sp_set, sizeof(bool) * twice_pop * twice_pop))
-	CHECK_CUDA(cudaMalloc((void **)&d_rank_count, sizeof(int) * twice_pop))
-	CHECK_CUDA(cudaMalloc((void **)&d_np, sizeof(int) * twice_pop))
-	CHECK_CUDA(cudaMalloc((void **)&d_sol_struct, sizeof(Sol) * twice_pop))
 
 	CHECK_CUDA(cudaMalloc((void **)&tmp_pop, sizeof(char) * twice_pop * len_sol))
 	CHECK_CUDA(cudaMalloc((void **)&tmp_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
@@ -1866,9 +1861,6 @@ int main()
 	CHECK_CUDA(cudaFree(d_sorted_array))
 	CHECK_CUDA(cudaFree(d_F_set))
 	CHECK_CUDA(cudaFree(d_Sp_set))
-	CHECK_CUDA(cudaFree(d_rank_count))
-	CHECK_CUDA(cudaFree(d_np))
-	CHECK_CUDA(cudaFree(d_sol_struct))
 	CHECK_CUDA(cudaFree(tmp_pop))
 	CHECK_CUDA(cudaFree(tmp_objval))
 	CHECK_CUDA(cudaFree(tmp_objidx))
