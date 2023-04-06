@@ -769,9 +769,6 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
     }
     __syncthreads();
 
-
-
-  
     // crowding distance sort
     sol_idx = 0;
     // write solution to shared memory Sol
@@ -851,7 +848,12 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
     {
         d_sorted_array[count - s_rank_count[front] + threadIdx.x] = s_sol_struct[threadIdx.x].sol_idx;
     }
+    __syncthreads();
 
+    if ((count + threadIdx.x) < (c_sort_popsize / 2))
+    {
+        d_sorted_array[count + threadIdx.x] = d_sorted_array[threadIdx.x % count];
+    }
 
 
     return;
