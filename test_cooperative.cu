@@ -790,7 +790,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
             sol_struct[sol_idx].sol_idx = g.thread_rank();
             sol_struct[sol_idx].corwding_dist = 0;
             sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
-            sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / IDEAL_MHD;
+            sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
             sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
         }
         g.sync();
@@ -947,7 +947,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         sol_struct[sol_idx].sol_idx = g.thread_rank();
         sol_struct[sol_idx].corwding_dist = 0;
         sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
-        sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / IDEAL_MHD;
+        sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
         sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
     }
     g.sync();

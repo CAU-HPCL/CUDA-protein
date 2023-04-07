@@ -796,7 +796,7 @@ __device__ void CompDownCrowd(Sol *s1, Sol *s2)
 Based on sorting methods on NSGA2 paper
 If we input number of threads and sorting function into cudaOccupancyMaxActiveBlocksPerMultiprocessor(), we get number of blocks available to use
 */
-__global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set, char *d_pop, float *d_objval, char *d_objidx, int *d_lrcsval)
+__global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set, float *d_objval)
 {
 	int i, j;
 	int sol_idx;
@@ -867,7 +867,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 			s_sol_struct[sol_idx].sol_idx = threadIdx.x;
 			s_sol_struct[sol_idx].corwding_dist = 0;
 			s_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
-			s_sol_struct[sol_idx].obj_val[_mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] / IDEAL_MHD;
+			s_sol_struct[sol_idx].obj_val[_mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] / 0.4;
 			s_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
 		}
 		__syncthreads();
@@ -983,7 +983,7 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
 		s_sol_struct[sol_idx].sol_idx = threadIdx.x;
 		s_sol_struct[sol_idx].corwding_dist = 0;
 		s_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
-		s_sol_struct[sol_idx].obj_val[_mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] / IDEAL_MHD;
+		s_sol_struct[sol_idx].obj_val[_mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] / 0.4;
 		s_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
 	}
 	__syncthreads();
@@ -1866,7 +1866,7 @@ int main()
 	total_time += kernel_time / 1000.f;
 
 
-	void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_pop, &d_objval, &d_objidx, &d_lrcsval};
+	void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_objval};
 	j = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
 	for (i = 0; i < j; i++)
