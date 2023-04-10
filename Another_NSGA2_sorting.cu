@@ -665,7 +665,7 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
 typedef struct
 {
 	int sol_idx;
-	int comp_indicator;
+	float comp_indicator;
 } Sol;
 
 __device__ void Sol_assign(Sol *s1, Sol *s2)
@@ -696,14 +696,14 @@ If we input number of threads and sorting function into cudaOccupancyMaxActiveBl
 __global__ void FastSortSolution(int *d_sorted_array, float *d_objval)
 {
 	int i, j;
-	int sol_idx;
 	int sec1, sec2;
+	int tmp;
 
 	extern __shared__ int smem[];
 	__shared__ Sol *s_sol_struct;
-	__shared__ int *s_crowd_indicator;
+	__shared__ int *s_crowd_indicator;		// this value used for sorting rank + crowd / n
 	__shared__ float *s_obj_compute;
-	__shared__ float *s_obj_boundary; // minimum next to maximum
+	__shared__ float *s_obj_boundary; 		// minimum next to maximum
 	__shared__ float *s_objval;
 
 	s_sol_struct = (Sol *)smem;
@@ -712,16 +712,17 @@ __global__ void FastSortSolution(int *d_sorted_array, float *d_objval)
 	s_objval = (float *)&s_obj_compute[blockDim.x];
 	s_obj_boundary = (float *)&s_objval[blockDim.x * OBJECTIVE_NUM];
 
-	s_crowd_indicator[threadIdx.x] = 0;
 
+	s_crowd_indicator[threadIdx.x] = 0;
 	/* copy objective value from global memory to shared memory */
 	s_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
 	s_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] / 0.4;
 	s_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
 	__syncthreads();
 
+
 	/* computing each objective boundary -> max & min */
-	for (i = 0; i < OBJECTIVE_NUM; i++)
+	/*for (i = 0; i < OBJECTIVE_NUM; i++)
 	{
 		// compute minimum value
 		s_obj_compute[threadIdx.x] = s_objval[threadIdx.x * OBJECTIVE_NUM + i];
@@ -744,8 +745,10 @@ __global__ void FastSortSolution(int *d_sorted_array, float *d_objval)
 
 			j /= 2;
 		}
-		if (threadIdx.x == 0)
+		if (threadIdx.x == 0){
 			s_obj_boundary[i * 2] = s_obj_compute[0];
+			//printf("%f \n",s_obj_compute[0]);
+		}
 		__syncthreads();
 
 		// compute maximum value
@@ -772,7 +775,7 @@ __global__ void FastSortSolution(int *d_sorted_array, float *d_objval)
 		if (threadIdx.x == 0)
 			s_obj_boundary[i * 2 + 1] = s_obj_compute[0];
 		__syncthreads();
-	}
+	}*/
 
 	s_sol_struct[threadIdx.x].sol_idx = threadIdx.x;
 	s_sol_struct[threadIdx.x].comp_indicator = 0;
@@ -783,19 +786,35 @@ __global__ void FastSortSolution(int *d_sorted_array, float *d_objval)
 			s_sol_struct[threadIdx.x].comp_indicator += 1;
 	}
 
-	/* computing crowd_indicator setting */
-	s_crowd_indicator[threadIdx.x] = (int)((s_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] - s_obj_boundary[_mCAI * 2]) / ((s_obj_boundary[_mCAI * 2 + 1] - s_obj_boundary[_mCAI * 2]) / delta));
-	s_crowd_indicator[threadIdx.x] += (int)((s_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] - s_obj_boundary[_mHD * 2]) / ((s_obj_boundary[_mHD * 2 + 1] - s_obj_boundary[_mHD * 2]) / delta));
-	s_crowd_indicator[threadIdx.x] += (int)((s_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] - s_obj_boundary[_MLRCS * 2]) / ((s_obj_boundary[_MLRCS * 2 + 1] - s_obj_boundary[_MLRCS * 2]) / delta));
+	if(threadIdx.x ==0)
+	{
+		s_obj_boundary[_mCAI * 2] = 0.f;
+		s_obj_boundary[_mCAI * 2 + 1] = 1.f;
+		s_obj_boundary[_mHD * 2] = 0.f;
+		s_obj_boundary[_mHD * 2 + 1] = 1.f;
+		s_obj_boundary[_MLRCS * 2] = 0.f;
+		s_obj_boundary[_MLRCS * 2 + 1] = 1.f;
+	}
 	__syncthreads();
 
+	/* computing crowd_indicator setting */
+	s_crowd_indicator[threadIdx.x] = (int)((s_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] - s_obj_boundary[_mCAI * 2]) / ((s_obj_boundary[_mCAI * 2 + 1] - s_obj_boundary[_mCAI * 2]) / delta));
+	s_crowd_indicator[threadIdx.x] += (int)((s_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] - s_obj_boundary[_mHD * 2]) / ((s_obj_boundary[_mHD * 2 + 1] - s_obj_boundary[_mHD * 2]) / delta)) * delta;
+	s_crowd_indicator[threadIdx.x] += (int)((s_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] - s_obj_boundary[_MLRCS * 2]) / ((s_obj_boundary[_MLRCS * 2 + 1] - s_obj_boundary[_MLRCS * 2]) / delta)) * delta * delta;
+	__syncthreads();
+
+
+	tmp = 0;
 	/* compare crowding indicator */
 	for (i = 0; i < c_sort_popsize; i++)
 	{
 		if (threadIdx.x != i && (s_crowd_indicator[threadIdx.x] == s_crowd_indicator[i]))
-			s_sol_struct[threadIdx.x].comp_indicator += 1;
+			tmp += 1;
+			//s_sol_struct[threadIdx.x].comp_indicator += 1;
 	}
+	s_sol_struct[threadIdx.x].comp_indicator += (float)tmp/c_sort_popsize;
 	__syncthreads();
+
 
 
 	/* Sorting solution struct based on comp_indicator in ascending order */
@@ -823,6 +842,16 @@ __global__ void FastSortSolution(int *d_sorted_array, float *d_objval)
 	if(threadIdx.x < (c_sort_popsize/2))
 		d_sorted_array[threadIdx.x] = s_sol_struct[threadIdx.x].sol_idx;
 
+
+
+	/* __syncthreads();
+	 if(threadIdx.x == 0)
+	 {
+	 	printf("\n");
+	 	for(i=0;i<(c_sort_popsize/2);i++)
+	 		printf("%f ",s_sol_struct[i].comp_indicator);
+	 	printf("\n");
+	 }*/
 
 	return;
 }
@@ -1645,7 +1674,7 @@ int main()
 		{
 			mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
 		}
-		CHECK_CUDA(cudaLaunchKernel((void *)FastSortSolution, 1, twice_pop, args, sizeof(Sol) * twice_pop + sizeof(int) * twice_pop + sizeof(float) * (twice_pop * OBJECTIVE_NUM + twice_pop + OBJECTIVE_NUM * 2)))
+		CHECK_CUDA(cudaLaunchKernel((void *)FastSortSolution, 1, twice_pop, args, sizeof(Sol) * twice_pop + sizeof(int) * twice_pop + sizeof(float) * (twice_pop *(OBJECTIVE_NUM + 1) + OBJECTIVE_NUM * 2)))
 	}
 	CHECK_CUDA(cudaEventRecord(d_end))
 	CHECK_CUDA(cudaEventSynchronize(d_end))

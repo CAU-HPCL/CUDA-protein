@@ -1540,6 +1540,7 @@ __global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx
 
 	state[id] = localState; // update state of random number generator
 
+	
 	return;
 }
 
