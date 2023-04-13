@@ -1,6 +1,10 @@
 {
     "files.associations": {
         "thread": "cpp",
-        "chrono": "cpp"
+        "chrono": "cpp",
+        "array": "cpp",
+        "initializer_list": "cpp",
+        "string_view": "cpp",
+        "utility": "cpp"
     }
 }
