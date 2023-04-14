@@ -724,8 +724,10 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
     int sec1, sec2;
     int idx;
 
-    d_rank_count[g.thread_rank()] = 0; // indicate number of solution in rank
-    d_np[g.thread_rank()] = 0;         // indicate solution's dominated number of solution
+    if(g.thread_rank() < c_sort_popsize){
+		d_rank_count[g.thread_rank()] = 0; // indicate number of solution in rank
+		d_np[g.thread_rank()] = 0;		   // indicate solution's dominated number of solution
+	}
 
     if (g.thread_rank() == 0)
     {
