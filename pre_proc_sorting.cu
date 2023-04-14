@@ -10,7 +10,9 @@
 #include <device_launch_parameters.h>
 #include <curand_kernel.h>
 #include <cuda.h>
-//#include <cooperative_groups.h>
+#include <cooperative_groups.h>
+
+using namespace cooperative_groups;
 
 #define _CRT_SECURE_NO_WARINGS
 
@@ -796,259 +798,251 @@ __device__ void CompDownCrowd(Sol *s1, Sol *s2)
 Based on sorting methods on NSGA2 paper
 If we input number of threads and sorting function into cudaOccupancyMaxActiveBlocksPerMultiprocessor(), we get number of blocks available to use
 */
-__global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set, float *d_objval)
+__global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set, float *d_objval, Sol *d_sol_struct, int *d_rank_count, int *d_np)
 {
-	int i, j;
-	int sol_idx;
-	int sec1, sec2;
+    auto g = this_grid();
 
-	extern __shared__ int smem[];
-	__shared__ Sol *s_sol_struct;
-	__shared__ int *s_rank_count;
-	__shared__ int *s_np;
-	__shared__ float *s_objval;
+    int i, j;
+    int sol_idx;
+    int sec1, sec2;
+    int idx;
 
-	s_sol_struct = (Sol *)smem;
-	s_rank_count = (int *)&s_sol_struct[blockDim.x];
-	s_np = (int *)&s_rank_count[blockDim.x];
-	s_objval = (float *)&s_np[blockDim.x];
+    d_rank_count[g.thread_rank()] = 0; // indicate number of solution in rank
+    d_np[g.thread_rank()] = 0;         // indicate solution's dominated number of solution
 
-	s_rank_count[threadIdx.x] = 0;
-	s_np[threadIdx.x] = 0;
+    if (g.thread_rank() == 0)
+    {
+        front = 0;
+        count = 0;
+        sorting_idx = 0;
+    }
+    g.sync();
 
-	/* copy objective value from global memory to shared memory */
-	s_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
-	s_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD];
-	s_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
+    /* -------------------- 1st front setting -------------------- */
+    if (g.thread_rank() < c_sort_popsize)
+    {
+        for (i = 0; i < c_sort_popsize; i++)
+        {
+            if (g.thread_rank() != i)
+            {
+                if (ParetoComparison(&d_objval[g.thread_rank() * OBJECTIVE_NUM], &d_objval[i * OBJECTIVE_NUM]))
+                    Sp_set[g.thread_rank() * c_sort_popsize + i] = true;
+                else if (ParetoComparison(&d_objval[i * OBJECTIVE_NUM], &d_objval[g.thread_rank() * OBJECTIVE_NUM]))
+                    d_np[g.thread_rank()] += 1;
+            }
+        }
+        if (d_np[g.thread_rank()] == 0)
+        {
+            F_set[g.thread_rank()] = true;
+            idx = atomicAdd(&count, 1); // atomicAdd return value is stored memory value before add operation
+            d_sorted_array[idx] = g.thread_rank();
+            atomicAdd(&d_rank_count[front], 1);
+        }
+    }
+    g.sync();
 
-	if (threadIdx.x == 0)
-	{
-		front = 0;
-		count = 0;
-		sorting_idx = 0;
-	}
-	__syncthreads();
+    sol_idx = 0;
+    // crowding distance sort
+    if (count > (c_sort_popsize / 2))
+    {
+        // write solution to shared memory Sol
+        if (g.thread_rank() < c_sort_popsize)
+        {
+            if (F_set[g.thread_rank()])
+            {
+                sol_idx = atomicAdd(&sorting_idx, 1);
+                d_sol_struct[sol_idx].sol_idx = g.thread_rank();
+                d_sol_struct[sol_idx].corwding_dist = 0;
+                d_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
+                d_sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
+                d_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
+            }
+        }
+        g.sync();
 
-	/* -------------------- 1st front setting -------------------- */
-	for (i = 0; i < c_sort_popsize; i++)
-	{
-		if (threadIdx.x != i)
-		{
-			if (ParetoComparison(&s_objval[threadIdx.x * OBJECTIVE_NUM], &s_objval[i * OBJECTIVE_NUM]))
-				Sp_set[threadIdx.x * c_sort_popsize + i] = true;
-			else if (ParetoComparison(&s_objval[i * OBJECTIVE_NUM], &s_objval[threadIdx.x * OBJECTIVE_NUM]))
-				s_np[threadIdx.x] += 1;
-		}
-	}
-	if (s_np[threadIdx.x] == 0)
-	{
-		F_set[threadIdx.x] = true;
-		while (atomicCAS(&lock, 0, 1) != 0)
-			;
-		d_sorted_array[count] = threadIdx.x;
-		count += 1;
-		s_rank_count[front] += 1;
-		atomicExch(&lock, 0);
-	}
-	__syncthreads();
+        for (i = 0; i < OBJECTIVE_NUM; i++)
+        {
+            // sorting objective function ascending order
+            sec1 = 1;
+            while (sec1 < d_rank_count[front])
+            {
+                if ((g.thread_rank() % (sec1 * 2) < sec1) && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+                    CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1], i);
 
+                sec2 = sec1 / 2;
+                g.sync();
 
-	sol_idx = 0;
-	// crowding distance sort
-	if (count > (c_sort_popsize / 2))
-	{
-		// write solution to shared memory Sol
-		if (F_set[threadIdx.x])
-		{
-			while (atomicCAS(&lock, 0, 1) != 0)
-				;
-			sol_idx = sorting_idx++;
-			atomicExch(&lock, 0);
-			s_sol_struct[sol_idx].sol_idx = threadIdx.x;
-			s_sol_struct[sol_idx].corwding_dist = 0;
-			s_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
-			s_sol_struct[sol_idx].obj_val[_mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] / 0.4;
-			s_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
-		}
-		__syncthreads();
+                while (sec2 != 0)
+                {
+                    if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+                        CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2], i);
+                    sec2 /= 2;
+                    g.sync();
+                }
 
-		for (i = 0; i < OBJECTIVE_NUM; i++)
-		{
-			// sorting objective function ascending order
-			sec1 = 1;
-			while (sec1 < s_rank_count[front])
-			{
-				if ((threadIdx.x % (sec1 * 2) < sec1) && ((sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - threadIdx.x % (sec1 * 2) - 1) < s_rank_count[front]))
-					CompUp(&s_sol_struct[threadIdx.x], &s_sol_struct[sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - (threadIdx.x % (sec1 * 2)) - 1], i);
+                sec1 *= 2;
+            }
+            g.sync();
 
-				sec2 = sec1 / 2;
-				__syncthreads();
+            if (g.thread_rank() < d_rank_count[front])
+            {
+                if (g.thread_rank() == 0)
+                    d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+                else if (g.thread_rank() == d_rank_count[front] - 1)
+                    d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+                else
+                    d_sol_struct[g.thread_rank()].corwding_dist += d_sol_struct[g.thread_rank() + 1].obj_val[i] - d_sol_struct[g.thread_rank() - 1].obj_val[i];
+            }
+            g.sync();
+        }
 
-				while (sec2 != 0)
-				{
-					if ((threadIdx.x % (sec2 * 2) < sec2) && (threadIdx.x + sec2 < s_rank_count[front]))
-						CompUp(&s_sol_struct[threadIdx.x], &s_sol_struct[threadIdx.x + sec2], i);
-					sec2 /= 2;
-					__syncthreads();
-				}
+        // sort crowding distance descending order
+        sec1 = 1;
+        while (sec1 < d_rank_count[front])
+        {
+            if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+                CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
 
-				sec1 *= 2;
-			}
-			__syncthreads();
+            sec2 = sec1 / 2;
+            g.sync();
 
-			if (threadIdx.x < s_rank_count[front])
-			{
-				if (threadIdx.x == 0)
-					s_sol_struct[threadIdx.x].corwding_dist = 10000.f;
-				else if (threadIdx.x == s_rank_count[front] - 1)
-					s_sol_struct[threadIdx.x].corwding_dist = 10000.f;
-				else
-					s_sol_struct[threadIdx.x].corwding_dist += s_sol_struct[threadIdx.x + 1].obj_val[i] - s_sol_struct[threadIdx.x - 1].obj_val[i];
-			}
-			__syncthreads();
-		}
+            while (sec2 != 0)
+            {
+                if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+                    CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2]);
+                sec2 /= 2;
+                g.sync();
+            }
 
-		// sort crowding distance descending order
-		sec1 = 1;
-		while (sec1 < s_rank_count[front])
-		{
-			if ((threadIdx.x % (sec1 * 2)) < sec1 && ((sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - threadIdx.x % (sec1 * 2) - 1) < s_rank_count[front]))
-				CompDownCrowd(&s_sol_struct[threadIdx.x], &s_sol_struct[sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - (threadIdx.x % (sec1 * 2)) - 1]);
+            sec1 *= 2;
+        }
+        g.sync();
 
-			sec2 = sec1 / 2;
-			__syncthreads();
+        if (g.thread_rank() < d_rank_count[front])
+        {
+            d_sorted_array[count - d_rank_count[front] + g.thread_rank()] = d_sol_struct[g.thread_rank()].sol_idx;
+        }
 
-			while (sec2 != 0)
-			{
-				if ((threadIdx.x % (sec2 * 2) < sec2) && (threadIdx.x + sec2 < s_rank_count[front]))
-					CompDownCrowd(&s_sol_struct[threadIdx.x], &s_sol_struct[threadIdx.x + sec2]);
-				sec2 /= 2;
-				__syncthreads();
-			}
+        return;
+    }
 
-			sec1 *= 2;
-		}
-		__syncthreads();
+    /* -------------------- non dominated sort  -------------------- */
+    if (g.thread_rank() == 0)
+        front += 1;
+    g.sync();
+    for (i = 0; i < c_sort_popsize - 1; i++)
+    {
+        if (g.thread_rank() < c_sort_popsize)
+        {
+            for (j = 0; j < c_sort_popsize; j++)
+            {
+                if (F_set[(front - 1) * c_sort_popsize + j] && Sp_set[j * c_sort_popsize + g.thread_rank()])
+                {
+                    d_np[g.thread_rank()] -= 1;
+                    if (d_np[g.thread_rank()] == 0)
+                    {
+                        F_set[front * c_sort_popsize + g.thread_rank()] = true;
+                        idx = atomicAdd(&count, 1);
+                        d_sorted_array[idx] = g.thread_rank();
+                        atomicAdd(&d_rank_count[front], 1);
+                    }
+                }
+            }
+        }
+        g.sync();
 
-		if (threadIdx.x < s_rank_count[front])
-		{
-			d_sorted_array[count - s_rank_count[front] + threadIdx.x] = s_sol_struct[threadIdx.x].sol_idx;
-		}
+        if (count > (c_sort_popsize / 2))
+        {
+            break;
+        }
 
-		return;
-	}
+        if (g.thread_rank() == 0)
+        {
+            front += 1;
+        }
+        g.sync();
+    }
 
+    sol_idx = 0;
+    // write solution to shared memory Sol
+    if (g.thread_rank() < c_sort_popsize)
+    {
+        if (F_set[front * c_sort_popsize + g.thread_rank()])
+        {
+            sol_idx = atomicAdd(&sorting_idx, 1);
+            d_sol_struct[sol_idx].sol_idx = g.thread_rank();
+            d_sol_struct[sol_idx].corwding_dist = 0;
+            d_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
+            d_sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
+            d_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
+        }
+    }
+    g.sync();
 
-	/* -------------------- non dominated sort  -------------------- */
-	if (threadIdx.x == 0)
-		front += 1;
-	__syncthreads();
-	for (i = 0; i < c_sort_popsize - 1; i++)
-	{
-		for (j = 0; j < c_sort_popsize; j++)
-		{
-			if (F_set[(front - 1) * c_sort_popsize + j] && Sp_set[j * c_sort_popsize + threadIdx.x])
-			{
-				s_np[threadIdx.x] -= 1;
-				if (s_np[threadIdx.x] == 0)
-				{
-					F_set[front * c_sort_popsize + threadIdx.x] = true;
-					while (atomicCAS(&lock, 0, 1) != 0)
-						;
-					d_sorted_array[count] = threadIdx.x;
-					count += 1;
-					s_rank_count[front] += 1; // rank_count 는 체크를 위한 부분으로 나중에 빠지는 것 가능!
-					atomicExch(&lock, 0);
-				}
-			}
-		}
-		__syncthreads();
+    for (i = 0; i < OBJECTIVE_NUM; i++)
+    {
+        // sorting objective function ascending order
+        sec1 = 1;
+        while (sec1 < d_rank_count[front])
+        {
+            if ((g.thread_rank() % (sec1 * 2) < sec1) && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+                CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1], i);
 
-		if (count > (c_sort_popsize / 2))
-			break;
+            sec2 = sec1 / 2;
+            g.sync();
 
-		if (threadIdx.x == 0)
-			front += 1;
-		__syncthreads();
-	}
+            while (sec2 != 0)
+            {
+                if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+                    CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2], i);
+                sec2 /= 2;
+                g.sync();
+            }
 
-	sol_idx = 0;
-	// write solution to shared memory Sol
-	if (F_set[front * c_sort_popsize + threadIdx.x])
-	{
-		while (atomicCAS(&lock, 0, 1) != 0)
-			;
-		sol_idx = sorting_idx++;
-		atomicExch(&lock, 0);
-		s_sol_struct[sol_idx].sol_idx = threadIdx.x;
-		s_sol_struct[sol_idx].corwding_dist = 0;
-		s_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mCAI];
-		s_sol_struct[sol_idx].obj_val[_mHD] = d_objval[threadIdx.x * OBJECTIVE_NUM + _mHD] / 0.4;
-		s_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[threadIdx.x * OBJECTIVE_NUM + _MLRCS];
-	}
-	__syncthreads();
+            sec1 *= 2;
+        }
+        g.sync();
 
-	for (i = 0; i < OBJECTIVE_NUM; i++)
-	{
-		// sorting objective function ascending order
-		sec1 = 1;
-		while (sec1 < s_rank_count[front])
-		{
-			if ((threadIdx.x % (sec1 * 2) < sec1) && ((sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - threadIdx.x % (sec1 * 2) - 1) < s_rank_count[front]))
-				CompUp(&s_sol_struct[threadIdx.x], &s_sol_struct[sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - (threadIdx.x % (sec1 * 2)) - 1], i);
+        if (g.thread_rank() < d_rank_count[front])
+        {
+            if (g.thread_rank() == 0)
+                d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+            else if (g.thread_rank() == d_rank_count[front] - 1)
+                d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+            else
+                d_sol_struct[g.thread_rank()].corwding_dist += d_sol_struct[g.thread_rank() + 1].obj_val[i] - d_sol_struct[g.thread_rank() - 1].obj_val[i];
+        }
+        g.sync();
+    }
 
-			sec2 = sec1 / 2;
-			__syncthreads();
-			while (sec2 != 0)
-			{
-				if ((threadIdx.x % (sec2 * 2) < sec2) && (threadIdx.x + sec2 < s_rank_count[front]))
-					CompUp(&s_sol_struct[threadIdx.x], &s_sol_struct[threadIdx.x + sec2], i);
-				sec2 /= 2;
-				__syncthreads();
-			}
+    // sort crowding distance descending order
+    sec1 = 1;
+    while (sec1 < d_rank_count[front])
+    {
+        if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+            CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
 
-			sec1 *= 2;
-		}
-		__syncthreads();
+        sec2 = sec1 / 2;
+        g.sync();
 
-		if (threadIdx.x < s_rank_count[front])
-		{
-			if (threadIdx.x == 0)
-				s_sol_struct[threadIdx.x].corwding_dist = 10000.f;
-			else if (threadIdx.x == s_rank_count[front] - 1)
-				s_sol_struct[threadIdx.x].corwding_dist = 10000.f;
-			else
-				s_sol_struct[threadIdx.x].corwding_dist += s_sol_struct[threadIdx.x + 1].obj_val[i] - s_sol_struct[threadIdx.x - 1].obj_val[i];
-		}
-		__syncthreads();
-	}
+        while (sec2 != 0)
+        {
+            if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+                CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2]);
+            sec2 /= 2;
+            g.sync();
+        }
 
-	// sort crowding distance descending order
-	sec1 = 1;
-	while (sec1 < s_rank_count[front])
-	{
-		if ((threadIdx.x % (sec1 * 2)) < sec1 && ((sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - threadIdx.x % (sec1 * 2) - 1) < s_rank_count[front]))
-			CompDownCrowd(&s_sol_struct[threadIdx.x], &s_sol_struct[sec1 * 2 * (threadIdx.x / (sec1 * 2) + 1) - (threadIdx.x % (sec1 * 2)) - 1]);
-		__syncthreads();
+        sec1 *= 2;
+    }
+    g.sync();
 
-		sec2 = sec1 / 2;
-		while (sec2 != 0)
-		{
-			if ((threadIdx.x % (sec2 * 2) < sec2) && (threadIdx.x + sec2 < s_rank_count[front]))
-				CompDownCrowd(&s_sol_struct[threadIdx.x], &s_sol_struct[threadIdx.x + sec2]);
-			sec2 /= 2;
-			__syncthreads();
-		}
-		sec1 *= 2;
-	}
-	__syncthreads();
+    if (g.thread_rank() < d_rank_count[front])
+    {
+        d_sorted_array[count - d_rank_count[front] + g.thread_rank()] = d_sol_struct[g.thread_rank()].sol_idx;
+    }
 
-	if (threadIdx.x < s_rank_count[front])
-	{
-		d_sorted_array[count - s_rank_count[front] + threadIdx.x] = s_sol_struct[threadIdx.x].sol_idx;
-	}
-
-	return;
+    return;
 }
 
 /*
@@ -1702,6 +1696,9 @@ int main()
 	int *d_lrcsval;
 	int *d_sorted_array;
 	bool *d_F_set, *d_Sp_set;
+	int *d_np;
+    int *d_rank_count;
+    Sol *d_sol_struct;
 
 	char *tmp_pop;
 	float *tmp_objval;
@@ -1837,6 +1834,10 @@ int main()
 	CHECK_CUDA(cudaMalloc((void **)&tmp_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
 	CHECK_CUDA(cudaMalloc((void **)&tmp_lrcsval, sizeof(int) * twice_pop * 3))
 
+ CHECK_CUDA(cudaMalloc((void **)&d_rank_count, sizeof(int) * twice_pop))
+    CHECK_CUDA(cudaMalloc((void **)&d_np, sizeof(int) * twice_pop))
+    CHECK_CUDA(cudaMalloc((void **)&d_sol_struct, sizeof(Sol) * twice_pop))
+
 	/* memory copy host to device */
 	CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
 	CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
@@ -1865,8 +1866,11 @@ int main()
 	CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
 	total_time += kernel_time / 1000.f;
 
+	int numCoopBlock = (twice_pop + deviceProp.maxThreadsPerBlock - 1) / deviceProp.maxThreadsPerBlock;
+    int numCoopThreads = (twice_pop % numCoopBlock == 0) ? (twice_pop / numCoopBlock) : (twice_pop / numCoopBlock) + 1;
 
-	void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_objval};
+
+	  void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_objval, &d_sol_struct, &d_rank_count, &d_np};
 	j = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
 	CHECK_CUDA(cudaEventRecord(d_start))
 	for (i = 0; i < j; i++)
@@ -1885,7 +1889,7 @@ int main()
 		}
 		CHECK_CUDA(cudaMemset(d_F_set,false,sizeof(bool)*twice_pop * twice_pop))
 		CHECK_CUDA(cudaMemset(d_Sp_set,false,sizeof(bool)*twice_pop * twice_pop))
-		CHECK_CUDA(cudaLaunchKernel((void *)FastSortSolution, 1, twice_pop, args, sizeof(Sol) * twice_pop + sizeof(int) * twice_pop * 2 + sizeof(float) * twice_pop * OBJECTIVE_NUM))
+		CHECK_CUDA(cudaLaunchCooperativeKernel((void **)FastSortSolution, numCoopBlock, numCoopThreads, args))
 	}
 	CHECK_CUDA(cudaEventRecord(d_end))
 	CHECK_CUDA(cudaEventSynchronize(d_end))
@@ -1959,6 +1963,10 @@ int main()
 	CHECK_CUDA(cudaFree(tmp_objval))
 	CHECK_CUDA(cudaFree(tmp_objidx))
 	CHECK_CUDA(cudaFree(tmp_lrcsval))
+	CHECK_CUDA(cudaFree(d_np))
+    CHECK_CUDA(cudaFree(d_sol_struct))
+    CHECK_CUDA(cudaFree(d_rank_count))
+
 
 	/* free host memory */
 	free(amino_seq);
