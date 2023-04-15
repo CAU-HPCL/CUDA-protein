@@ -203,17 +203,19 @@ __device__ void mutation(curandStateXORWOW *state, const char *codon_info, char 
 		}
 		break;
 
-		case LOWER:
-			new_idx = (char)(curand_uniform(state) * origin_pos);
-			if (cd_prob <= mprob && origin_pos != 0) {
-				while (new_idx == origin_pos) {
-					new_idx = (char)(curand_uniform(state) * origin_pos);
-				}
-				target[0] = codon_info[new_idx * CODON_SIZE];
-				target[1] = codon_info[new_idx * CODON_SIZE + 1];
-				target[2] = codon_info[new_idx * CODON_SIZE + 2];
+	case LOWER:
+		new_idx = (char)(curand_uniform(state) * origin_pos);
+		if (cd_prob <= mprob && origin_pos != 0)
+		{
+			while (new_idx == origin_pos)
+			{
+				new_idx = (char)(curand_uniform(state) * origin_pos);
 			}
-			break;
+			target[0] = codon_info[new_idx * CODON_SIZE];
+			target[1] = codon_info[new_idx * CODON_SIZE + 1];
+			target[2] = codon_info[new_idx * CODON_SIZE + 2];
+		}
+		break;
 	}
 
 	return;
@@ -250,7 +252,7 @@ Afeter complete GenSolution in global memory
 d_sorted_array = 0, 1, .. n - 1
 and solution, etc...
 */
-__global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_idx, char* d_pop, float* d_objval, char* d_objidx, int* d_lrcsval, int* d_sorted_array, const int limit, const float lowest_mcai)
+__global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_idx, char *d_pop, float *d_objval, char *d_objidx, int *d_lrcsval, int *d_sorted_array, const int limit, const float lowest_mcai)
 {
 	curandStateXORWOW localState;
 	int id;
@@ -262,11 +264,9 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	char lrcs_i, lrcs_j;
 	int lrcs_p, lrcs_q, lrcs_l, tmp_l;
 
-
 	float section_low, section_high, adjust_prob;
 	char direct;
 	int cnt;
-
 
 	id = blockDim.x * blockIdx.x + threadIdx.x;
 	localState = state[id];
@@ -274,42 +274,44 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	len_sol = len_cds * c_cds_num;
 
 	extern __shared__ int smem[];
-	__shared__ int* s_lrcs_tid;
-	__shared__ int* s_sol_lrcsval;
-	__shared__ float* s_sol_objval;
-	__shared__ float* s_obj_compute;
-	__shared__ char* s_amino_seq_idx;
-	__shared__ char* s_sol;
-	__shared__ char* s_sol_objidx;
+	__shared__ int *s_lrcs_tid;
+	__shared__ int *s_sol_lrcsval;
+	__shared__ float *s_sol_objval;
+	__shared__ float *s_obj_compute;
+	__shared__ char *s_amino_seq_idx;
+	__shared__ char *s_sol;
+	__shared__ char *s_sol_objidx;
 
 	s_lrcs_tid = smem;
-	s_sol_lrcsval = (int*)&s_lrcs_tid[blockDim.x];
-	s_sol_objval = (float*)&s_sol_lrcsval[3];
-	s_obj_compute = (float*)&s_sol_objval[OBJECTIVE_NUM];
-	s_amino_seq_idx = (char*)&s_obj_compute[blockDim.x];
-	s_sol = (char*)&s_amino_seq_idx[c_len_amino_seq];
-	s_sol_objidx = (char*)&s_sol[len_sol];
-
+	s_sol_lrcsval = (int *)&s_lrcs_tid[blockDim.x];
+	s_sol_objval = (float *)&s_sol_lrcsval[3];
+	s_obj_compute = (float *)&s_sol_objval[OBJECTIVE_NUM];
+	s_amino_seq_idx = (char *)&s_obj_compute[blockDim.x];
+	s_sol = (char *)&s_amino_seq_idx[c_len_amino_seq];
+	s_sol_objidx = (char *)&s_sol[len_sol];
 
 	num_partition = (c_len_amino_seq % blockDim.x == 0) ? c_len_amino_seq / blockDim.x : c_len_amino_seq / blockDim.x + 1;
-	for (i = 0; i < num_partition; i++) {
+	for (i = 0; i < num_partition; i++)
+	{
 		idx = blockDim.x * i + threadIdx.x;
-		if (idx < c_len_amino_seq) {
+		if (idx < c_len_amino_seq)
+		{
 			s_amino_seq_idx[idx] = d_amino_seq_idx[idx];
 		}
 	}
 	__syncthreads();
 	// --------------------------------------------------------------------------------------
 
-
 	/* -------------------- initialize solution -------------------- */
 
 	if (blockIdx.x == gridDim.x - 1)
 	{
 		num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
-		for (i = 0; i < num_partition; i++) {
+		for (i = 0; i < num_partition; i++)
+		{
 			idx = blockDim.x * i + threadIdx.x;
-			if (idx < c_len_amino_seq * c_cds_num) {
+			if (idx < c_len_amino_seq * c_cds_num)
+			{
 				seq_idx = idx % c_len_amino_seq;
 
 				pos = c_codons_num[s_amino_seq_idx[seq_idx]] - 1;
@@ -323,14 +325,18 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			}
 		}
 	}
-	else {
+	else
+	{
 		num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
-		for (i = 0; i < num_partition; i++) {
+		for (i = 0; i < num_partition; i++)
+		{
 			idx = blockDim.x * i + threadIdx.x;
-			if (idx < c_len_amino_seq * c_cds_num) {
+			if (idx < c_len_amino_seq * c_cds_num)
+			{
 				seq_idx = idx % c_len_amino_seq;
 
-				do {
+				do
+				{
 					pos = (char)(curand_uniform(&localState) * c_codons_num[s_amino_seq_idx[seq_idx]]);
 				} while (pos == c_codons_num[s_amino_seq_idx[seq_idx]]);
 
@@ -345,25 +351,29 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	}
 	__syncthreads();
 
-
 	/* calculate mCAI */
 	num_partition = (c_len_amino_seq % blockDim.x == 0) ? (c_len_amino_seq / blockDim.x) : (c_len_amino_seq / blockDim.x) + 1;
-	for (i = 0; i < c_cds_num; i++) {
+	for (i = 0; i < c_cds_num; i++)
+	{
 		s_obj_compute[threadIdx.x] = 1;
 
-		for (j = 0; j < num_partition; j++) {
+		for (j = 0; j < num_partition; j++)
+		{
 			seq_idx = blockDim.x * j + threadIdx.x;
-			if (seq_idx < c_len_amino_seq) {
+			if (seq_idx < c_len_amino_seq)
+			{
 				pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[len_cds * i + seq_idx * CODON_SIZE],
-					c_codons_num[s_amino_seq_idx[seq_idx]]);
+								c_codons_num[s_amino_seq_idx[seq_idx]]);
 				s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / c_len_amino_seq);
 			}
 		}
 		__syncthreads();
 
 		j = blockDim.x / 2;
-		while (true) {
-			if (threadIdx.x < j) {
+		while (true)
+		{
+			if (threadIdx.x < j)
+			{
 				s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
 			}
 			__syncthreads();
@@ -380,21 +390,21 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			j /= 2;
 		}
 
-		if (threadIdx.x == 0) {
-			if (i == 0) {
+		if (threadIdx.x == 0)
+		{
+			if (i == 0)
+			{
 				s_sol_objval[_mCAI] = s_obj_compute[0];
 				s_sol_objidx[_mCAI * 2] = i;
 			}
-			else if (s_obj_compute[0] <= s_sol_objval[_mCAI]) {
+			else if (s_obj_compute[0] <= s_sol_objval[_mCAI])
+			{
 				s_sol_objval[_mCAI] = s_obj_compute[0];
 				s_sol_objidx[_mCAI * 2] = i;
 			}
 		}
 		__syncthreads();
-
 	}
-
-
 
 	/* ------------------------------ intentional mutation initail solution for adjusting mCAI ------------------------------ */
 	section_low = lowest_mcai + (1 - lowest_mcai) / gridDim.x * (blockIdx.x % gridDim.x);
@@ -408,64 +418,78 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 		direct = UPPER;
 	else if (s_sol_objval[_mCAI] > section_high)
 		direct = LOWER;
-	if (blockIdx.x != gridDim.x - 1) {
+	if (blockIdx.x != gridDim.x - 1)
+	{
 		while (cnt < limit && (s_sol_objval[_mCAI] < section_low || s_sol_objval[_mCAI] > section_high))
 		{
-			if (s_sol_objval[_mCAI] < section_low) {
-				if (direct != UPPER) {
+			if (s_sol_objval[_mCAI] < section_low)
+			{
+				if (direct != UPPER)
+				{
 					direct = UPPER;
 					adjust_prob /= 2;
 				}
 				num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
-				for (i = 0; i < num_partition; i++) {
+				for (i = 0; i < num_partition; i++)
+				{
 					idx = blockDim.x * i + threadIdx.x;
-					if (idx < c_len_amino_seq * c_cds_num) {
+					if (idx < c_len_amino_seq * c_cds_num)
+					{
 						seq_idx = idx % c_len_amino_seq;
 
 						pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
-							c_codons_num[s_amino_seq_idx[seq_idx]]);
+										c_codons_num[s_amino_seq_idx[seq_idx]]);
 						mutation(&localState, &c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
-							c_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
+								 c_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, UPPER);
 					}
 				}
 			}
-			else {
-				if (direct != LOWER) {
+			else
+			{
+				if (direct != LOWER)
+				{
 					direct = LOWER;
 					adjust_prob /= 2;
 				}
 				num_partition = ((c_len_amino_seq * c_cds_num) % blockDim.x == 0) ? (c_len_amino_seq * c_cds_num) / blockDim.x : (c_len_amino_seq * c_cds_num) / blockDim.x + 1;
-				for (i = 0; i < num_partition; i++) {
+				for (i = 0; i < num_partition; i++)
+				{
 					idx = blockDim.x * i + threadIdx.x;
-					if (idx < c_len_amino_seq * c_cds_num) {
+					if (idx < c_len_amino_seq * c_cds_num)
+					{
 						seq_idx = idx % c_len_amino_seq;
 
 						pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
-							c_codons_num[s_amino_seq_idx[seq_idx]]);
+										c_codons_num[s_amino_seq_idx[seq_idx]]);
 						mutation(&localState, &c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[idx * CODON_SIZE],
-							c_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
+								 c_codons_num[s_amino_seq_idx[seq_idx]], pos, adjust_prob, LOWER);
 					}
 				}
 			}
 
 			/* calculate mCAI value */
 			num_partition = (c_len_amino_seq % blockDim.x == 0) ? (c_len_amino_seq / blockDim.x) : (c_len_amino_seq / blockDim.x) + 1;
-			for (i = 0; i < c_cds_num; i++) {
+			for (i = 0; i < c_cds_num; i++)
+			{
 				s_obj_compute[threadIdx.x] = 1;
 
-				for (j = 0; j < num_partition; j++) {
+				for (j = 0; j < num_partition; j++)
+				{
 					seq_idx = blockDim.x * j + threadIdx.x;
-					if (seq_idx < c_len_amino_seq) {
+					if (seq_idx < c_len_amino_seq)
+					{
 						pos = FindNum_C(&c_codons[c_amino_startpos[s_amino_seq_idx[seq_idx]] * CODON_SIZE], &s_sol[len_cds * i + seq_idx * CODON_SIZE],
-							c_codons_num[s_amino_seq_idx[seq_idx]]);
+										c_codons_num[s_amino_seq_idx[seq_idx]]);
 						s_obj_compute[threadIdx.x] *= (float)pow(c_codons_weight[c_amino_startpos[s_amino_seq_idx[seq_idx]] + pos], 1.0 / c_len_amino_seq);
 					}
 				}
 				__syncthreads();
 
 				j = blockDim.x / 2;
-				while (true) {
-					if (threadIdx.x < j) {
+				while (true)
+				{
+					if (threadIdx.x < j)
+					{
 						s_obj_compute[threadIdx.x] *= s_obj_compute[threadIdx.x + j];
 					}
 					__syncthreads();
@@ -482,44 +506,50 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 					j /= 2;
 				}
 
-				if (threadIdx.x == 0) {
-					if (i == 0) {
+				if (threadIdx.x == 0)
+				{
+					if (i == 0)
+					{
 						s_sol_objval[_mCAI] = s_obj_compute[0];
 						s_sol_objidx[_mCAI * 2] = i;
 					}
-					else if (s_obj_compute[0] <= s_sol_objval[_mCAI]) {
+					else if (s_obj_compute[0] <= s_sol_objval[_mCAI])
+					{
 						s_sol_objval[_mCAI] = s_obj_compute[0];
 						s_sol_objidx[_mCAI * 2] = i;
 					}
 				}
 				__syncthreads();
-
 			}
 			cnt++;
 		}
 	}
 	/* ------------------------------ end of intational muation ------------------------------ */
 
-
-
 	/* calculate mHD */
 	num_partition = (len_cds % blockDim.x == 0) ? (len_cds / blockDim.x) : (len_cds / blockDim.x) + 1;
-	for (i = 0; i < c_cds_num - 1; i++) {
-		for (j = i + 1; j < c_cds_num; j++) {
+	for (i = 0; i < c_cds_num - 1; i++)
+	{
+		for (j = i + 1; j < c_cds_num; j++)
+		{
 			s_obj_compute[threadIdx.x] = 0;
 
-			for (k = 0; k < num_partition; k++) {
+			for (k = 0; k < num_partition; k++)
+			{
 				seq_idx = blockDim.x * k + threadIdx.x;
 
-				if (seq_idx < len_cds && (s_sol[len_cds * i + seq_idx] != s_sol[len_cds * j + seq_idx])) {
+				if (seq_idx < len_cds && (s_sol[len_cds * i + seq_idx] != s_sol[len_cds * j + seq_idx]))
+				{
 					s_obj_compute[threadIdx.x] += 1;
 				}
 			}
 			__syncthreads();
 
 			k = blockDim.x / 2;
-			while (true) {
-				if (threadIdx.x < k) {
+			while (true)
+			{
+				if (threadIdx.x < k)
+				{
 					s_obj_compute[threadIdx.x] += s_obj_compute[threadIdx.x + k];
 				}
 				__syncthreads();
@@ -536,44 +566,52 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 				k /= 2;
 			}
 
-			if (threadIdx.x == 0) {
-				if (i == 0 && j == 1) {
+			if (threadIdx.x == 0)
+			{
+				if (i == 0 && j == 1)
+				{
 					s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
 					s_sol_objidx[_mHD * 2] = i;
 					s_sol_objidx[_mHD * 2 + 1] = j;
 				}
-				else if ((s_obj_compute[0] / len_cds) <= s_sol_objval[_mHD]) {
+				else if ((s_obj_compute[0] / len_cds) <= s_sol_objval[_mHD])
+				{
 					s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
 					s_sol_objidx[_mHD * 2] = i;
 					s_sol_objidx[_mHD * 2 + 1] = j;
 				}
 			}
 			__syncthreads();
-
 		}
 	}
 
 	/* calculate MLRCS */
 	s_obj_compute[threadIdx.x] = NOT_FOUND;
 	lrcs_l = 0;
-	for (i = 0; i < c_cds_num; i++) {
-		for (j = i; j < c_cds_num; j++) {
+	for (i = 0; i < c_cds_num; i++)
+	{
+		for (j = i; j < c_cds_num; j++)
+		{
 			idx = threadIdx.x;
 
 			if (i == j)
 			{
 				while (idx < 2 * len_cds + 1)
 				{
-					if (idx < len_cds + 1) {
+					if (idx < len_cds + 1)
+					{
 						l = idx + 1;
 						seq_idx = len_cds - l;
 
-						for (k = 0; k < l; k++) {
+						for (k = 0; k < l; k++)
+						{
 							if (k == 0 || (seq_idx == -1))
 								tmp_l = 0;
-							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1]) {
+							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1])
+							{
 								tmp_l++;
-								if (tmp_l >= lrcs_l) {
+								if (tmp_l >= lrcs_l)
+								{
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = seq_idx + k + 1 - lrcs_l;
@@ -586,17 +624,20 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 								tmp_l = 0;
 						}
 					}
-					else {
+					else
+					{
 						l = 2 * len_cds + 1 - idx;
 						seq_idx = len_cds - l;
 
-						for (k = 0; k < l; k++) {
+						for (k = 0; k < l; k++)
+						{
 							if (k == 0)
 								tmp_l = 0;
 							else if (s_sol[len_cds * i + k - 1] == s_sol[len_cds * j + seq_idx + k])
 							{
 								tmp_l++;
-								if (tmp_l >= lrcs_l) {
+								if (tmp_l >= lrcs_l)
+								{
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = k - lrcs_l;
@@ -608,7 +649,6 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 							else
 								tmp_l = 0;
 						}
-
 					}
 
 					idx += blockDim.x;
@@ -618,15 +658,19 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 			{
 				while (idx < 2 * len_cds + 1)
 				{
-					if (idx < len_cds + 1) {
+					if (idx < len_cds + 1)
+					{
 						l = idx + 1;
 						seq_idx = len_cds - l;
-						for (k = 0; k < l; k++) {
+						for (k = 0; k < l; k++)
+						{
 							if (k == 0)
 								tmp_l = 0;
-							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1]) {
+							else if (s_sol[len_cds * i + seq_idx + k] == s_sol[len_cds * j + k - 1])
+							{
 								tmp_l++;
-								if (tmp_l >= lrcs_l) {
+								if (tmp_l >= lrcs_l)
+								{
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = seq_idx + k + 1 - lrcs_l;
@@ -639,17 +683,20 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 								tmp_l = 0;
 						}
 					}
-					else {
+					else
+					{
 						l = 2 * len_cds + 1 - idx;
 						seq_idx = len_cds - l;
 
-						for (k = 0; k < l; k++) {
+						for (k = 0; k < l; k++)
+						{
 							if (k == 0)
 								tmp_l = 0;
 							else if (s_sol[len_cds * i + k - 1] == s_sol[len_cds * j + seq_idx + k])
 							{
 								tmp_l++;
-								if (tmp_l >= lrcs_l) {
+								if (tmp_l >= lrcs_l)
+								{
 									lrcs_l = tmp_l;
 									s_obj_compute[threadIdx.x] = lrcs_l;
 									lrcs_p = k - lrcs_l;
@@ -661,13 +708,11 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 							else
 								tmp_l = 0;
 						}
-
 					}
 
 					idx += blockDim.x;
 				}
 			}
-
 		}
 	}
 	__syncthreads();
@@ -689,7 +734,8 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 
 		if ((j % 2 == 1) && (threadIdx.x == 0))
 		{
-			if (s_obj_compute[j - 1] > s_obj_compute[0]) {
+			if (s_obj_compute[j - 1] > s_obj_compute[0])
+			{
 				s_obj_compute[0] = s_obj_compute[j - 1];
 				s_lrcs_tid[0] = s_lrcs_tid[j - 1];
 			}
@@ -712,10 +758,10 @@ __global__ void GenSolution(curandStateXORWOW* state, const char* d_amino_seq_id
 	__syncthreads();
 	/* -------------------- end of initialize -------------------- */
 
-
 	/* copy from shared memory to global memory */
 	num_partition = (len_sol % blockDim.x == 0) ? (len_sol / blockDim.x) : (len_sol / blockDim.x) + 1;
-	for (i = 0; i < num_partition; i++) {
+	for (i = 0; i < num_partition; i++)
+	{
 		idx = blockDim.x * i + threadIdx.x;
 		if (idx < len_sol)
 			d_pop[blockIdx.x * len_sol + idx] = s_sol[idx];
@@ -800,251 +846,252 @@ If we input number of threads and sorting function into cudaOccupancyMaxActiveBl
 */
 __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set, float *d_objval, Sol *d_sol_struct, int *d_rank_count, int *d_np)
 {
-    auto g = this_grid();
+	auto g = this_grid();
 
-    int i, j;
-    int sol_idx;
-    int sec1, sec2;
-    int idx;
+	int i, j;
+	int sol_idx;
+	int sec1, sec2;
+	int idx;
 
-    if(g.thread_rank() < c_sort_popsize){
+	if (g.thread_rank() < c_sort_popsize)
+	{
 		d_rank_count[g.thread_rank()] = 0; // indicate number of solution in rank
 		d_np[g.thread_rank()] = 0;		   // indicate solution's dominated number of solution
 	}
-	
-    if (g.thread_rank() == 0)
-    {
-        front = 0;
-        count = 0;
-        sorting_idx = 0;
-    }
-    g.sync();
 
-    /* -------------------- 1st front setting -------------------- */
-    if (g.thread_rank() < c_sort_popsize)
-    {
-        for (i = 0; i < c_sort_popsize; i++)
-        {
-            if (g.thread_rank() != i)
-            {
-                if (ParetoComparison(&d_objval[g.thread_rank() * OBJECTIVE_NUM], &d_objval[i * OBJECTIVE_NUM]))
-                    Sp_set[g.thread_rank() * c_sort_popsize + i] = true;
-                else if (ParetoComparison(&d_objval[i * OBJECTIVE_NUM], &d_objval[g.thread_rank() * OBJECTIVE_NUM]))
-                    d_np[g.thread_rank()] += 1;
-            }
-        }
-        if (d_np[g.thread_rank()] == 0)
-        {
-            F_set[g.thread_rank()] = true;
-            idx = atomicAdd(&count, 1); // atomicAdd return value is stored memory value before add operation
-            d_sorted_array[idx] = g.thread_rank();
-            atomicAdd(&d_rank_count[front], 1);
-        }
-    }
-    g.sync();
+	if (g.thread_rank() == 0)
+	{
+		front = 0;
+		count = 0;
+		sorting_idx = 0;
+	}
+	g.sync();
 
-    sol_idx = 0;
-    // crowding distance sort
-    if (count > (c_sort_popsize / 2))
-    {
-        // write solution to shared memory Sol
-        if (g.thread_rank() < c_sort_popsize)
-        {
-            if (F_set[g.thread_rank()])
-            {
-                sol_idx = atomicAdd(&sorting_idx, 1);
-                d_sol_struct[sol_idx].sol_idx = g.thread_rank();
-                d_sol_struct[sol_idx].corwding_dist = 0;
-                d_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
-                d_sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
-                d_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
-            }
-        }
-        g.sync();
+	/* -------------------- 1st front setting -------------------- */
+	if (g.thread_rank() < c_sort_popsize)
+	{
+		for (i = 0; i < c_sort_popsize; i++)
+		{
+			if (g.thread_rank() != i)
+			{
+				if (ParetoComparison(&d_objval[g.thread_rank() * OBJECTIVE_NUM], &d_objval[i * OBJECTIVE_NUM]))
+					Sp_set[g.thread_rank() * c_sort_popsize + i] = true;
+				else if (ParetoComparison(&d_objval[i * OBJECTIVE_NUM], &d_objval[g.thread_rank() * OBJECTIVE_NUM]))
+					d_np[g.thread_rank()] += 1;
+			}
+		}
+		if (d_np[g.thread_rank()] == 0)
+		{
+			F_set[g.thread_rank()] = true;
+			idx = atomicAdd(&count, 1); // atomicAdd return value is stored memory value before add operation
+			d_sorted_array[idx] = g.thread_rank();
+			atomicAdd(&d_rank_count[front], 1);
+		}
+	}
+	g.sync();
 
-        for (i = 0; i < OBJECTIVE_NUM; i++)
-        {
-            // sorting objective function ascending order
-            sec1 = 1;
-            while (sec1 < d_rank_count[front])
-            {
-                if ((g.thread_rank() % (sec1 * 2) < sec1) && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
-                    CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1], i);
+	sol_idx = 0;
+	// crowding distance sort
+	if (count > (c_sort_popsize / 2))
+	{
+		// write solution to shared memory Sol
+		if (g.thread_rank() < c_sort_popsize)
+		{
+			if (F_set[g.thread_rank()])
+			{
+				sol_idx = atomicAdd(&sorting_idx, 1);
+				d_sol_struct[sol_idx].sol_idx = g.thread_rank();
+				d_sol_struct[sol_idx].corwding_dist = 0;
+				d_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
+				d_sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
+				d_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
+			}
+		}
+		g.sync();
 
-                sec2 = sec1 / 2;
-                g.sync();
+		for (i = 0; i < OBJECTIVE_NUM; i++)
+		{
+			// sorting objective function ascending order
+			sec1 = 1;
+			while (sec1 < d_rank_count[front])
+			{
+				if ((g.thread_rank() % (sec1 * 2) < sec1) && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+					CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1], i);
 
-                while (sec2 != 0)
-                {
-                    if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
-                        CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2], i);
-                    sec2 /= 2;
-                    g.sync();
-                }
+				sec2 = sec1 / 2;
+				g.sync();
 
-                sec1 *= 2;
-            }
-            g.sync();
+				while (sec2 != 0)
+				{
+					if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+						CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2], i);
+					sec2 /= 2;
+					g.sync();
+				}
 
-            if (g.thread_rank() < d_rank_count[front])
-            {
-                if (g.thread_rank() == 0)
-                    d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
-                else if (g.thread_rank() == d_rank_count[front] - 1)
-                    d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
-                else
-                    d_sol_struct[g.thread_rank()].corwding_dist += d_sol_struct[g.thread_rank() + 1].obj_val[i] - d_sol_struct[g.thread_rank() - 1].obj_val[i];
-            }
-            g.sync();
-        }
+				sec1 *= 2;
+			}
+			g.sync();
 
-        // sort crowding distance descending order
-        sec1 = 1;
-        while (sec1 < d_rank_count[front])
-        {
-            if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
-                CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
+			if (g.thread_rank() < d_rank_count[front])
+			{
+				if (g.thread_rank() == 0)
+					d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+				else if (g.thread_rank() == d_rank_count[front] - 1)
+					d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+				else
+					d_sol_struct[g.thread_rank()].corwding_dist += d_sol_struct[g.thread_rank() + 1].obj_val[i] - d_sol_struct[g.thread_rank() - 1].obj_val[i];
+			}
+			g.sync();
+		}
 
-            sec2 = sec1 / 2;
-            g.sync();
+		// sort crowding distance descending order
+		sec1 = 1;
+		while (sec1 < d_rank_count[front])
+		{
+			if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+				CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
 
-            while (sec2 != 0)
-            {
-                if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
-                    CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2]);
-                sec2 /= 2;
-                g.sync();
-            }
+			sec2 = sec1 / 2;
+			g.sync();
 
-            sec1 *= 2;
-        }
-        g.sync();
+			while (sec2 != 0)
+			{
+				if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+					CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2]);
+				sec2 /= 2;
+				g.sync();
+			}
 
-        if (g.thread_rank() < d_rank_count[front])
-        {
-            d_sorted_array[count - d_rank_count[front] + g.thread_rank()] = d_sol_struct[g.thread_rank()].sol_idx;
-        }
+			sec1 *= 2;
+		}
+		g.sync();
 
-        return;
-    }
+		if (g.thread_rank() < d_rank_count[front])
+		{
+			d_sorted_array[count - d_rank_count[front] + g.thread_rank()] = d_sol_struct[g.thread_rank()].sol_idx;
+		}
 
-    /* -------------------- non dominated sort  -------------------- */
-    if (g.thread_rank() == 0)
-        front += 1;
-    g.sync();
-    for (i = 0; i < c_sort_popsize - 1; i++)
-    {
-        if (g.thread_rank() < c_sort_popsize)
-        {
-            for (j = 0; j < c_sort_popsize; j++)
-            {
-                if (F_set[(front - 1) * c_sort_popsize + j] && Sp_set[j * c_sort_popsize + g.thread_rank()])
-                {
-                    d_np[g.thread_rank()] -= 1;
-                    if (d_np[g.thread_rank()] == 0)
-                    {
-                        F_set[front * c_sort_popsize + g.thread_rank()] = true;
-                        idx = atomicAdd(&count, 1);
-                        d_sorted_array[idx] = g.thread_rank();
-                        atomicAdd(&d_rank_count[front], 1);
-                    }
-                }
-            }
-        }
-        g.sync();
+		return;
+	}
 
-        if (count > (c_sort_popsize / 2))
-        {
-            break;
-        }
+	/* -------------------- non dominated sort  -------------------- */
+	if (g.thread_rank() == 0)
+		front += 1;
+	g.sync();
+	for (i = 0; i < c_sort_popsize - 1; i++)
+	{
+		if (g.thread_rank() < c_sort_popsize)
+		{
+			for (j = 0; j < c_sort_popsize; j++)
+			{
+				if (F_set[(front - 1) * c_sort_popsize + j] && Sp_set[j * c_sort_popsize + g.thread_rank()])
+				{
+					d_np[g.thread_rank()] -= 1;
+					if (d_np[g.thread_rank()] == 0)
+					{
+						F_set[front * c_sort_popsize + g.thread_rank()] = true;
+						idx = atomicAdd(&count, 1);
+						d_sorted_array[idx] = g.thread_rank();
+						atomicAdd(&d_rank_count[front], 1);
+					}
+				}
+			}
+		}
+		g.sync();
 
-        if (g.thread_rank() == 0)
-        {
-            front += 1;
-        }
-        g.sync();
-    }
+		if (count > (c_sort_popsize / 2))
+		{
+			break;
+		}
 
-    sol_idx = 0;
-    // write solution to shared memory Sol
-    if (g.thread_rank() < c_sort_popsize)
-    {
-        if (F_set[front * c_sort_popsize + g.thread_rank()])
-        {
-            sol_idx = atomicAdd(&sorting_idx, 1);
-            d_sol_struct[sol_idx].sol_idx = g.thread_rank();
-            d_sol_struct[sol_idx].corwding_dist = 0;
-            d_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
-            d_sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
-            d_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
-        }
-    }
-    g.sync();
+		if (g.thread_rank() == 0)
+		{
+			front += 1;
+		}
+		g.sync();
+	}
 
-    for (i = 0; i < OBJECTIVE_NUM; i++)
-    {
-        // sorting objective function ascending order
-        sec1 = 1;
-        while (sec1 < d_rank_count[front])
-        {
-            if ((g.thread_rank() % (sec1 * 2) < sec1) && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
-                CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1], i);
+	sol_idx = 0;
+	// write solution to shared memory Sol
+	if (g.thread_rank() < c_sort_popsize)
+	{
+		if (F_set[front * c_sort_popsize + g.thread_rank()])
+		{
+			sol_idx = atomicAdd(&sorting_idx, 1);
+			d_sol_struct[sol_idx].sol_idx = g.thread_rank();
+			d_sol_struct[sol_idx].corwding_dist = 0;
+			d_sol_struct[sol_idx].obj_val[_mCAI] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mCAI];
+			d_sol_struct[sol_idx].obj_val[_mHD] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _mHD] / 0.4;
+			d_sol_struct[sol_idx].obj_val[_MLRCS] = d_objval[g.thread_rank() * OBJECTIVE_NUM + _MLRCS];
+		}
+	}
+	g.sync();
 
-            sec2 = sec1 / 2;
-            g.sync();
+	for (i = 0; i < OBJECTIVE_NUM; i++)
+	{
+		// sorting objective function ascending order
+		sec1 = 1;
+		while (sec1 < d_rank_count[front])
+		{
+			if ((g.thread_rank() % (sec1 * 2) < sec1) && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+				CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1], i);
 
-            while (sec2 != 0)
-            {
-                if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
-                    CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2], i);
-                sec2 /= 2;
-                g.sync();
-            }
+			sec2 = sec1 / 2;
+			g.sync();
 
-            sec1 *= 2;
-        }
-        g.sync();
+			while (sec2 != 0)
+			{
+				if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+					CompUp(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2], i);
+				sec2 /= 2;
+				g.sync();
+			}
 
-        if (g.thread_rank() < d_rank_count[front])
-        {
-            if (g.thread_rank() == 0)
-                d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
-            else if (g.thread_rank() == d_rank_count[front] - 1)
-                d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
-            else
-                d_sol_struct[g.thread_rank()].corwding_dist += d_sol_struct[g.thread_rank() + 1].obj_val[i] - d_sol_struct[g.thread_rank() - 1].obj_val[i];
-        }
-        g.sync();
-    }
+			sec1 *= 2;
+		}
+		g.sync();
 
-    // sort crowding distance descending order
-    sec1 = 1;
-    while (sec1 < d_rank_count[front])
-    {
-        if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
-            CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
+		if (g.thread_rank() < d_rank_count[front])
+		{
+			if (g.thread_rank() == 0)
+				d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+			else if (g.thread_rank() == d_rank_count[front] - 1)
+				d_sol_struct[g.thread_rank()].corwding_dist = 10000.f;
+			else
+				d_sol_struct[g.thread_rank()].corwding_dist += d_sol_struct[g.thread_rank() + 1].obj_val[i] - d_sol_struct[g.thread_rank() - 1].obj_val[i];
+		}
+		g.sync();
+	}
 
-        sec2 = sec1 / 2;
-        g.sync();
+	// sort crowding distance descending order
+	sec1 = 1;
+	while (sec1 < d_rank_count[front])
+	{
+		if ((g.thread_rank() % (sec1 * 2)) < sec1 && ((sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - g.thread_rank() % (sec1 * 2) - 1) < d_rank_count[front]))
+			CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[sec1 * 2 * (g.thread_rank() / (sec1 * 2) + 1) - (g.thread_rank() % (sec1 * 2)) - 1]);
 
-        while (sec2 != 0)
-        {
-            if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
-                CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2]);
-            sec2 /= 2;
-            g.sync();
-        }
+		sec2 = sec1 / 2;
+		g.sync();
 
-        sec1 *= 2;
-    }
-    g.sync();
+		while (sec2 != 0)
+		{
+			if ((g.thread_rank() % (sec2 * 2) < sec2) && (g.thread_rank() + sec2 < d_rank_count[front]))
+				CompDownCrowd(&d_sol_struct[g.thread_rank()], &d_sol_struct[g.thread_rank() + sec2]);
+			sec2 /= 2;
+			g.sync();
+		}
 
-    if (g.thread_rank() < d_rank_count[front])
-    {
-        d_sorted_array[count - d_rank_count[front] + g.thread_rank()] = d_sol_struct[g.thread_rank()].sol_idx;
-    }
+		sec1 *= 2;
+	}
+	g.sync();
 
-    return;
+	if (g.thread_rank() < d_rank_count[front])
+	{
+		d_sorted_array[count - d_rank_count[front] + g.thread_rank()] = d_sol_struct[g.thread_rank()].sol_idx;
+	}
+
+	return;
 }
 
 /*
@@ -1624,6 +1671,26 @@ __global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx
 
 int main()
 {
+	FILE *global_fp;
+	FILE *pipe;
+	int global_cycle;
+	char command[100] = "./hv -r \"0 0 1\" test.txt";
+	char buffer[128];
+	const char *ffile_name[] = {"Q5VZP5.fasta.txt",
+						  "A4Y1B6.fasta.txt",
+						  "B3LS90.fasta.txt",
+						  "B4TWR7.fasta.txt",
+						  "Q91X51.fasta.txt",
+						  "Q89BP2.fasta.txt"};
+	int ff_cds_num[] = {2, 3, 4, 5, 6, 7};
+	const char *ff_result[] = {
+		"/home/jeus5771/CUDA_protein/pre_proc_sorting/pre_proc_sorting_result/pre_proc_sorting_result1.csv",
+		"/home/jeus5771/CUDA_protein/pre_proc_sorting/pre_proc_sorting_result/pre_proc_sorting_result2.csv",
+		"/home/jeus5771/CUDA_protein/pre_proc_sorting/pre_proc_sorting_result/pre_proc_sorting_result3.csv",
+		"/home/jeus5771/CUDA_protein/pre_proc_sorting/pre_proc_sorting_result/pre_proc_sorting_result4.csv",
+		"/home/jeus5771/CUDA_protein/pre_proc_sorting/pre_proc_sorting_result/pre_proc_sorting_result5.csv",
+		"/home/jeus5771/CUDA_protein/pre_proc_sorting/pre_proc_sorting_result/pre_proc_sorting_result6.csv"};
+
 	srand((unsigned int)time(NULL));
 
 	/* To get information of Deivce */
@@ -1676,7 +1743,7 @@ int main()
 	float mprob; // mutation probability
 	float min_dist;
 
-	float lowest_mcai;						// for divide initial solution section
+	float lowest_mcai; // for divide initial solution section
 	int limit;
 
 	char tmp;
@@ -1699,8 +1766,8 @@ int main()
 	int *d_sorted_array;
 	bool *d_F_set, *d_Sp_set;
 	int *d_np;
-    int *d_rank_count;
-    Sol *d_sol_struct;
+	int *d_rank_count;
+	Sol *d_sol_struct;
 
 	char *tmp_pop;
 	float *tmp_objval;
@@ -1711,8 +1778,8 @@ int main()
 	float total_time = 0;
 
 	/* input parameter values */
-	printf("Input file name : ");
-	scanf("%s", input_file);
+	// printf("Input file name : ");
+	// scanf("%s", input_file);
 	printf("Input number of cycle : ");
 	scanf("%d", &total_cycle);
 	if (total_cycle < 0)
@@ -1734,13 +1801,13 @@ int main()
 		printf("Input number of solution > 0\n");
 		return EXIT_FAILURE;
 	}
-	printf("Input number of CDSs in a solution : ");
-	scanf("%d", &cds_num);
-	if (cds_num <= 1)
-	{
-		printf("Input number of CDSs > 1\n");
-		return EXIT_FAILURE;
-	}
+	// printf("Input number of CDSs in a solution : ");
+	// scanf("%d", &cds_num);
+	// if (cds_num <= 1)
+	//{
+	//	printf("Input number of CDSs > 1\n");
+	//	return EXIT_FAILURE;
+	// }
 	printf("Input mutation probability (0 ~ 1 value) : ");
 	scanf("%f", &mprob);
 	if (mprob < 0 || mprob > 1)
@@ -1748,234 +1815,266 @@ int main()
 		printf("Input mutation probability (0 ~ 1 value) : \n");
 		return EXIT_FAILURE;
 	}
-	printf("input number of limit : "); scanf("%d", &limit);
+	printf("input number of limit : ");
+	scanf("%d", &limit);
 	printf("Input thread per block x value --> number of thread  warp size (32) * x : ");
 	scanf("%d", &x);
+    printf("Input number of global cycle : ");
+	scanf("%d", &global_cycle);
 	printf("For sorting kernel use number of twice_pop threads per block");
 
-	/* read input file (fasta format) */
-	fp = fopen(input_file, "r");
-	if (fp == NULL)
+	for (int zz = 0; zz < sizeof(ff_cds_num) / sizeof(int); zz++)
 	{
-		printf("Line : %d Opening input file is failed", __LINE__);
-		return EXIT_FAILURE;
-	}
-
-	numBlocks = pop_size;
-	threadsPerBlock = WARP_SIZE * x;
-	twice_pop = pop_size * 2;
-
-	fseek(fp, 0, SEEK_END);
-	len_amino_seq = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	fgets(buf, 256, fp);
-	len_amino_seq -= ftell(fp);
-
-	amino_seq = (char *)malloc(sizeof(char) * len_amino_seq);
-
-	idx = 0;
-	while (!feof(fp))
-	{
-		tmp = fgetc(fp);
-		if (tmp != '\n')
-			amino_seq[idx++] = tmp;
-	}
-	amino_seq[idx] = NULL;
-	len_amino_seq = idx - 1;
-	len_cds = len_amino_seq * CODON_SIZE;
-	len_sol = len_cds * cds_num;
-
-	fclose(fp);
-	/* end file process */
-
-	h_amino_seq_idx = (char *)malloc(sizeof(char) * len_amino_seq);
-	for (i = 0; i < len_amino_seq; i++)
-	{
-		idx = FindAminoIndex(amino_seq[i]);
-		if (idx == NOT_FOUND)
+		global_fp = fopen(ff_result[zz], "w");
+		fprintf(global_fp, "time,short distance,hyper volume\n\n");
+		memset(input_file, NULL, sizeof(input_file));
+		memcpy(input_file, ffile_name[zz], sizeof(input_file));
+		cds_num = ff_cds_num[zz];
+		for (int z = 0; z < global_cycle; z++)
 		{
-			printf("FindAminoIndex function is failed... \n");
-			return EXIT_FAILURE;
+			total_time = 0;
+
+			/* read input file (fasta format) */
+			fp = fopen(input_file, "r");
+			if (fp == NULL)
+			{
+				printf("Line : %d Opening input file is failed", __LINE__);
+				return EXIT_FAILURE;
+			}
+
+			numBlocks = pop_size;
+			threadsPerBlock = WARP_SIZE * x;
+			twice_pop = pop_size * 2;
+
+			fseek(fp, 0, SEEK_END);
+			len_amino_seq = ftell(fp);
+			fseek(fp, 0, SEEK_SET);
+			fgets(buf, 256, fp);
+			len_amino_seq -= ftell(fp);
+
+			amino_seq = (char *)malloc(sizeof(char) * len_amino_seq);
+
+			idx = 0;
+			while (!feof(fp))
+			{
+				tmp = fgetc(fp);
+				if (tmp != '\n')
+					amino_seq[idx++] = tmp;
+			}
+			amino_seq[idx] = NULL;
+			len_amino_seq = idx - 1;
+			len_cds = len_amino_seq * CODON_SIZE;
+			len_sol = len_cds * cds_num;
+
+			fclose(fp);
+			/* end file process */
+
+			h_amino_seq_idx = (char *)malloc(sizeof(char) * len_amino_seq);
+			for (i = 0; i < len_amino_seq; i++)
+			{
+				idx = FindAminoIndex(amino_seq[i]);
+				if (idx == NOT_FOUND)
+				{
+					printf("FindAminoIndex function is failed... \n");
+					return EXIT_FAILURE;
+				}
+				h_amino_seq_idx[i] = idx;
+			}
+
+			h_amino_startpos = (char *)malloc(sizeof(char) * 20);
+			h_amino_startpos[0] = 0;
+			for (i = 1; i < 20; i++)
+			{
+				h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
+			}
+
+			/* caculate the smallest mCAI value */
+			lowest_mcai = 1.f;
+			for (i = 0; i < len_amino_seq; i++)
+			{
+				lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
+			}
+
+			/* host memory allocation */
+			h_pop = (char *)malloc(sizeof(char) * twice_pop * len_sol);
+			h_objval = (float *)malloc(sizeof(float) * twice_pop * OBJECTIVE_NUM);
+
+			/* device memory allocation */
+			CHECK_CUDA(cudaEventCreate(&d_start))
+			CHECK_CUDA(cudaEventCreate(&d_end))
+			CHECK_CUDA(cudaMalloc((void **)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock))
+			CHECK_CUDA(cudaMalloc((void **)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
+			CHECK_CUDA(cudaMalloc((void **)&d_pop, sizeof(char) * twice_pop * len_sol))
+			CHECK_CUDA(cudaMalloc((void **)&d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
+			CHECK_CUDA(cudaMalloc((void **)&d_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
+			CHECK_CUDA(cudaMalloc((void **)&d_lrcsval, sizeof(int) * twice_pop * 3))
+			CHECK_CUDA(cudaMalloc((void **)&d_sorted_array, sizeof(int) * twice_pop))
+			CHECK_CUDA(cudaMalloc((void **)&d_F_set, sizeof(bool) * twice_pop * twice_pop))
+			CHECK_CUDA(cudaMalloc((void **)&d_Sp_set, sizeof(bool) * twice_pop * twice_pop))
+
+			CHECK_CUDA(cudaMalloc((void **)&tmp_pop, sizeof(char) * twice_pop * len_sol))
+			CHECK_CUDA(cudaMalloc((void **)&tmp_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
+			CHECK_CUDA(cudaMalloc((void **)&tmp_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
+			CHECK_CUDA(cudaMalloc((void **)&tmp_lrcsval, sizeof(int) * twice_pop * 3))
+
+			CHECK_CUDA(cudaMalloc((void **)&d_rank_count, sizeof(int) * twice_pop))
+			CHECK_CUDA(cudaMalloc((void **)&d_np, sizeof(int) * twice_pop))
+			CHECK_CUDA(cudaMalloc((void **)&d_sol_struct, sizeof(Sol) * twice_pop))
+
+			/* memory copy host to device */
+			CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
+			CHECK_CUDA(cudaMemcpyToSymbol(c_sort_popsize, &twice_pop, sizeof(int)))
+
+			/* ------------------------------------------------ kerenl call ----------------------------------------------- */
+			/* curand generator setting */
+			CHECK_CUDA(cudaEventRecord(d_start))
+			setup_kernel<<<numBlocks, threadsPerBlock>>>(genState, (unsigned long long)rand());
+			CHECK_CUDA(cudaEventRecord(d_end))
+			CHECK_CUDA(cudaEventSynchronize(d_end))
+			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+			total_time += kernel_time / 1000.f;
+
+			/* initialize solution */
+			CHECK_CUDA(cudaEventRecord(d_start))
+			GenSolution<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, limit, lowest_mcai);
+			CHECK_CUDA(cudaEventRecord(d_end))
+			CHECK_CUDA(cudaEventSynchronize(d_end))
+			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+			total_time += kernel_time / 1000.f;
+
+			int numCoopBlock = (twice_pop + deviceProp.maxThreadsPerBlock - 1) / deviceProp.maxThreadsPerBlock;
+			int numCoopThreads = (twice_pop % numCoopBlock == 0) ? (twice_pop / numCoopBlock) : (twice_pop / numCoopBlock) + 1;
+
+			void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_objval, &d_sol_struct, &d_rank_count, &d_np};
+			j = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
+			CHECK_CUDA(cudaEventRecord(d_start))
+			for (i = 0; i < j; i++)
+			{
+				CHECK_CUDA(cudaMemcpy(tmp_pop, d_pop, sizeof(char) * len_sol * twice_pop, cudaMemcpyDeviceToDevice))
+				CHECK_CUDA(cudaMemcpy(tmp_objval, d_objval, sizeof(float) * OBJECTIVE_NUM * twice_pop, cudaMemcpyDeviceToDevice))
+				CHECK_CUDA(cudaMemcpy(tmp_objidx, d_objidx, sizeof(char) * OBJECTIVE_NUM * 2 * twice_pop, cudaMemcpyDeviceToDevice))
+				CHECK_CUDA(cudaMemcpy(tmp_lrcsval, d_lrcsval, sizeof(int) * 3 * twice_pop, cudaMemcpyDeviceToDevice))
+				if (i == j - 1 && (total_cycle % sorting_cycle != 0))
+				{
+					mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
+				}
+				else
+				{
+					mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
+				}
+				CHECK_CUDA(cudaMemset(d_F_set, false, sizeof(bool) * twice_pop * twice_pop))
+				CHECK_CUDA(cudaMemset(d_Sp_set, false, sizeof(bool) * twice_pop * twice_pop))
+				CHECK_CUDA(cudaLaunchCooperativeKernel((void **)FastSortSolution, numCoopBlock, numCoopThreads, args))
+			}
+			CHECK_CUDA(cudaEventRecord(d_end))
+			CHECK_CUDA(cudaEventSynchronize(d_end))
+			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+			total_time += kernel_time / 1000.f;
+
+			/* memory copy device to host */
+			CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * twice_pop * len_sol, cudaMemcpyDeviceToHost))
+			CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM, cudaMemcpyDeviceToHost))
+
+			// for compute hypervolume & minimum distance out process
+			for (i = 0; i < twice_pop; i++)
+			{
+				h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
+			}
+			// print minimum distance to ideal point
+			min_dist = MinEuclid(h_objval, twice_pop);
+			printf("minimum distance to the ideal point : %f\n", min_dist);
+
+			/* print solution */
+			// for (i = 0; i < pop_size * 2; i++)
+			//{
+			//	printf("%d solution\n", i + 1);
+			//	for (j = 0; j < cds_num; j++) {
+			//		printf("%d cds : ", j + 1);
+			//		for (k = 0; k < len_cds; k++) {
+			//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
+			//		}
+			//		printf("\n");
+			//	}
+			//	printf("\n");
+			// }
+
+			/* print objective value */
+			// printf("\n\n");
+			// for (i = 0; i < pop_size * 2; i++)
+			//{
+			//	printf("%d solution\n", i + 1);
+			//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+			//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
+			//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
+			//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
+			//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
+			// }
+
+			std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
+			fp = fopen("test.txt", "w");
+			/* for computing hypervolume write file */
+			for (i = 0; i < twice_pop; i++)
+			{
+				fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+			}
+			fclose(fp);
+			std::chrono::duration<double> sec = std::chrono::system_clock::now() - start;
+			total_time += static_cast<float>(sec.count());
+			printf("\n\n total time : %f\n\n", total_time);
+
+			pipe = popen(command, "r");
+			if (!pipe)
+			{
+				printf("Failed to execute command\n");
+				return 1;
+			}
+
+			// Read the output of the command
+			while (fgets(buffer, sizeof(buffer), pipe))
+			{
+				printf("%s", buffer);
+			}
+
+			// Close the pipe
+			pclose(pipe);
+			fprintf(global_fp, "%f,%f,%f\n", total_time, min_dist, atof(buffer));
+
+			/* free deivce memory */
+			CHECK_CUDA(cudaEventDestroy(d_start))
+			CHECK_CUDA(cudaEventDestroy(d_end))
+			CHECK_CUDA(cudaFree(genState))
+			CHECK_CUDA(cudaFree(d_amino_seq_idx))
+			CHECK_CUDA(cudaFree(d_pop))
+			CHECK_CUDA(cudaFree(d_objval))
+			CHECK_CUDA(cudaFree(d_objidx))
+			CHECK_CUDA(cudaFree(d_lrcsval))
+			CHECK_CUDA(cudaFree(d_sorted_array))
+			CHECK_CUDA(cudaFree(d_F_set))
+			CHECK_CUDA(cudaFree(d_Sp_set))
+			CHECK_CUDA(cudaFree(tmp_pop))
+			CHECK_CUDA(cudaFree(tmp_objval))
+			CHECK_CUDA(cudaFree(tmp_objidx))
+			CHECK_CUDA(cudaFree(tmp_lrcsval))
+			CHECK_CUDA(cudaFree(d_np))
+			CHECK_CUDA(cudaFree(d_sol_struct))
+			CHECK_CUDA(cudaFree(d_rank_count))
+
+			/* free host memory */
+			free(amino_seq);
+			free(h_amino_seq_idx);
+			free(h_amino_startpos);
+			free(h_pop);
+			free(h_objval);
 		}
-		h_amino_seq_idx[i] = idx;
+		fclose(global_fp);
 	}
-
-	h_amino_startpos = (char *)malloc(sizeof(char) * 20);
-	h_amino_startpos[0] = 0;
-	for (i = 1; i < 20; i++)
-	{
-		h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
-	}
-
-/* caculate the smallest mCAI value */
-	lowest_mcai = 1.f;
-	for (i = 0; i < len_amino_seq; i++) {
-		lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
-	}
-
-
-	/* host memory allocation */
-	h_pop = (char *)malloc(sizeof(char) * twice_pop * len_sol);
-	h_objval = (float *)malloc(sizeof(float) * twice_pop * OBJECTIVE_NUM);
-
-	/* device memory allocation */
-	CHECK_CUDA(cudaEventCreate(&d_start))
-	CHECK_CUDA(cudaEventCreate(&d_end))
-	CHECK_CUDA(cudaMalloc((void **)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock))
-	CHECK_CUDA(cudaMalloc((void **)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
-	CHECK_CUDA(cudaMalloc((void **)&d_pop, sizeof(char) * twice_pop * len_sol))
-	CHECK_CUDA(cudaMalloc((void **)&d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
-	CHECK_CUDA(cudaMalloc((void **)&d_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
-	CHECK_CUDA(cudaMalloc((void **)&d_lrcsval, sizeof(int) * twice_pop * 3))
-	CHECK_CUDA(cudaMalloc((void **)&d_sorted_array, sizeof(int) * twice_pop))
-	CHECK_CUDA(cudaMalloc((void **)&d_F_set, sizeof(bool) * twice_pop * twice_pop))
-	CHECK_CUDA(cudaMalloc((void **)&d_Sp_set, sizeof(bool) * twice_pop * twice_pop))
-
-	CHECK_CUDA(cudaMalloc((void **)&tmp_pop, sizeof(char) * twice_pop * len_sol))
-	CHECK_CUDA(cudaMalloc((void **)&tmp_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
-	CHECK_CUDA(cudaMalloc((void **)&tmp_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
-	CHECK_CUDA(cudaMalloc((void **)&tmp_lrcsval, sizeof(int) * twice_pop * 3))
-
- CHECK_CUDA(cudaMalloc((void **)&d_rank_count, sizeof(int) * twice_pop))
-    CHECK_CUDA(cudaMalloc((void **)&d_np, sizeof(int) * twice_pop))
-    CHECK_CUDA(cudaMalloc((void **)&d_sol_struct, sizeof(Sol) * twice_pop))
-
-	/* memory copy host to device */
-	CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
-	CHECK_CUDA(cudaMemcpyToSymbol(c_sort_popsize, &twice_pop, sizeof(int)))
-
-	/* ------------------------------------------------ kerenl call ----------------------------------------------- */
-	/* curand generator setting */
-	CHECK_CUDA(cudaEventRecord(d_start))
-	setup_kernel<<<numBlocks, threadsPerBlock>>>(genState, (unsigned long long)rand());
-	CHECK_CUDA(cudaEventRecord(d_end))
-	CHECK_CUDA(cudaEventSynchronize(d_end))
-	CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-	total_time += kernel_time / 1000.f;
-
-	/* initialize solution */
-	CHECK_CUDA(cudaEventRecord(d_start))
-	GenSolution<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, limit, lowest_mcai);
-	CHECK_CUDA(cudaEventRecord(d_end))
-	CHECK_CUDA(cudaEventSynchronize(d_end))
-	CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-	total_time += kernel_time / 1000.f;
-
-	int numCoopBlock = (twice_pop + deviceProp.maxThreadsPerBlock - 1) / deviceProp.maxThreadsPerBlock;
-    int numCoopThreads = (twice_pop % numCoopBlock == 0) ? (twice_pop / numCoopBlock) : (twice_pop / numCoopBlock) + 1;
-
-
-	  void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_objval, &d_sol_struct, &d_rank_count, &d_np};
-	j = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
-	CHECK_CUDA(cudaEventRecord(d_start))
-	for (i = 0; i < j; i++)
-	{
-		CHECK_CUDA(cudaMemcpy(tmp_pop, d_pop, sizeof(char) * len_sol * twice_pop, cudaMemcpyDeviceToDevice))
-		CHECK_CUDA(cudaMemcpy(tmp_objval, d_objval, sizeof(float) * OBJECTIVE_NUM * twice_pop, cudaMemcpyDeviceToDevice))
-		CHECK_CUDA(cudaMemcpy(tmp_objidx, d_objidx, sizeof(char) * OBJECTIVE_NUM * 2 * twice_pop, cudaMemcpyDeviceToDevice))
-		CHECK_CUDA(cudaMemcpy(tmp_lrcsval, d_lrcsval, sizeof(int) * 3 * twice_pop, cudaMemcpyDeviceToDevice))
-		if (i == j - 1 && (total_cycle % sorting_cycle != 0))
-		{
-			mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
-		}
-		else
-		{
-			mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
-		}
-		CHECK_CUDA(cudaMemset(d_F_set,false,sizeof(bool)*twice_pop * twice_pop))
-		CHECK_CUDA(cudaMemset(d_Sp_set,false,sizeof(bool)*twice_pop * twice_pop))
-		CHECK_CUDA(cudaLaunchCooperativeKernel((void **)FastSortSolution, numCoopBlock, numCoopThreads, args))
-	}
-	CHECK_CUDA(cudaEventRecord(d_end))
-	CHECK_CUDA(cudaEventSynchronize(d_end))
-	CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-	total_time += kernel_time / 1000.f;
-
-	/* memory copy device to host */
-	CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * twice_pop * len_sol, cudaMemcpyDeviceToHost))
-	CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM, cudaMemcpyDeviceToHost))
-
-	// for compute hypervolume & minimum distance out process
-	for (i = 0; i < twice_pop; i++)
-	{
-		h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
-	}
-	// print minimum distance to ideal point
-	min_dist = MinEuclid(h_objval, twice_pop);
-	printf("minimum distance to the ideal point : %f\n", min_dist);
-
-	/* print solution */
-	// for (i = 0; i < pop_size * 2; i++)
-	//{
-	//	printf("%d solution\n", i + 1);
-	//	for (j = 0; j < cds_num; j++) {
-	//		printf("%d cds : ", j + 1);
-	//		for (k = 0; k < len_cds; k++) {
-	//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
-	//		}
-	//		printf("\n");
-	//	}
-	//	printf("\n");
-	// }
-
-	/* print objective value */
-	// printf("\n\n");
-	// for (i = 0; i < pop_size * 2; i++)
-	//{
-	//	printf("%d solution\n", i + 1);
-	//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-	//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
-	//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
-	//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
-	//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
-	// }
-
-	std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
-	fp = fopen("test.txt", "w");
-	/* for computing hypervolume write file */
-	for (i = 0; i < twice_pop; i++)
-	{
-		fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-	}
-	fclose(fp);
-	std::chrono::duration<double> sec = std::chrono::system_clock::now() - start;
-	total_time += static_cast<float>(sec.count());
-	printf("\n\n total time : %f\n\n", total_time);
-
-	/* free deivce memory */
-	CHECK_CUDA(cudaEventDestroy(d_start))
-	CHECK_CUDA(cudaEventDestroy(d_end))
-	CHECK_CUDA(cudaFree(genState))
-	CHECK_CUDA(cudaFree(d_amino_seq_idx))
-	CHECK_CUDA(cudaFree(d_pop))
-	CHECK_CUDA(cudaFree(d_objval))
-	CHECK_CUDA(cudaFree(d_objidx))
-	CHECK_CUDA(cudaFree(d_lrcsval))
-	CHECK_CUDA(cudaFree(d_sorted_array))
-	CHECK_CUDA(cudaFree(d_F_set))
-	CHECK_CUDA(cudaFree(d_Sp_set))
-	CHECK_CUDA(cudaFree(tmp_pop))
-	CHECK_CUDA(cudaFree(tmp_objval))
-	CHECK_CUDA(cudaFree(tmp_objidx))
-	CHECK_CUDA(cudaFree(tmp_lrcsval))
-	CHECK_CUDA(cudaFree(d_np))
-    CHECK_CUDA(cudaFree(d_sol_struct))
-    CHECK_CUDA(cudaFree(d_rank_count))
-
-
-	/* free host memory */
-	free(amino_seq);
-	free(h_amino_seq_idx);
-	free(h_amino_startpos);
-	free(h_pop);
-	free(h_objval);
 
 	return EXIT_SUCCESS;
 }

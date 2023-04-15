@@ -1547,20 +1547,20 @@ int main()
     int global_cycle;
     char command[100] = "./hv -r \"0 0 1\" test.txt";
     char buffer[128];
-    char *ffile_name[] = {"Q5VZP5.fasta.txt",
+    const char *ffile_name[] = {"Q5VZP5.fasta.txt",
                           "A4Y1B6.fasta.txt",
                           "B3LS90.fasta.txt",
                           "B4TWR7.fasta.txt",
                           "Q91X51.fasta.txt",
                           "Q89BP2.fasta.txt"};
     int ff_cds_num[] = {2, 3, 4, 5, 6, 7};
-    char *ff_result[] = {
-        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sortig_result/NSGA2_sorting_reuslt1.csv",
-        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sortig_result/NSGA2_sorting_reuslt2.csv",
-        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sortig_result/NSGA2_sorting_reuslt3.csv",
-        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sortig_result/NSGA2_sorting_reuslt4.csv",
-        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sortig_result/NSGA2_sorting_reuslt5.csv",
-        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sortig_result/NSGA2_sorting_reuslt6.csv"};
+    const char *ff_result[] = {
+        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sorting_result/NSGA2_sorting_reuslt1.csv",
+        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sorting_result/NSGA2_sorting_reuslt2.csv",
+        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sorting_result/NSGA2_sorting_reuslt3.csv",
+        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sorting_result/NSGA2_sorting_reuslt4.csv",
+        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sorting_result/NSGA2_sorting_reuslt5.csv",
+        "/home/jeus5771/CUDA_protein/NSGA2_sorting/NSGA2_sorting_result/NSGA2_sorting_reuslt6.csv"};
 
     srand((unsigned int)time(NULL));
 
@@ -1690,11 +1690,11 @@ int main()
     scanf("%d", &global_cycle);
     printf("For sorting kernel use number of twice_pop threads per block");
 
-    for (int zz = 0; zz < sizeof(ffile_name); zz++)
+    for (int zz = 0; zz < sizeof(ff_cds_num) / sizeof(int); zz++)
     {
         global_fp = fopen(ff_result[zz], "w");
         fprintf(global_fp, "time,short distance,hyper volume\n\n");
-        memset(input_file, NULL, sizeof(input_file));
+        memset(input_file, 0, sizeof(input_file));
         memcpy(input_file, ffile_name[zz], sizeof(input_file));
         cds_num = ff_cds_num[zz];
         for (int z = 0; z < global_cycle; z++)
