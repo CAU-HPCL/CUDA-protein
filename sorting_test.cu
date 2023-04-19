@@ -1,4 +1,4 @@
-﻿/* include C/C++ header */
+﻿/* include C/C++ header */ //
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>

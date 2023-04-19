@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 time,short distance,hyper volume,Q89BP2.fasta.txt
 
 
@@ -16,3 +17,5 @@ cycle : 50, pop_size : 128
 cycle : 50, pop_size : 256
 0.555263,0.604213,0.486318
 0.554707,0.597669,0.483268
+=======
+>>>>>>> origin/HEAD
