@@ -1677,11 +1677,11 @@ int main()
 	char command[100] = "./hv -r \"0 0 1\" test.txt";
 	char buffer[128];
 	const char *ffile_name[] = {"Q5VZP5.fasta.txt",
-						  "A4Y1B6.fasta.txt",
-						  "B3LS90.fasta.txt",
-						  "B4TWR7.fasta.txt",
-						  "Q91X51.fasta.txt",
-						  "Q89BP2.fasta.txt"};
+								"A4Y1B6.fasta.txt",
+								"B3LS90.fasta.txt",
+								"B4TWR7.fasta.txt",
+								"Q91X51.fasta.txt",
+								"Q89BP2.fasta.txt"};
 	int ff_cds_num[] = {2, 3, 4, 5, 6, 7};
 	const char *ff_result[] = {
 		"/home/jeus5771/CUDA_protein/pre_proc_sorting/pre_proc_sorting_result/pre_proc_sorting_result1.csv",
@@ -1780,13 +1780,13 @@ int main()
 	/* input parameter values */
 	// printf("Input file name : ");
 	// scanf("%s", input_file);
-	printf("Input number of cycle : ");
-	scanf("%d", &total_cycle);
-	if (total_cycle < 0)
-	{
-		printf("Input max cycle value >= 0\n");
-		return EXIT_FAILURE;
-	}
+	// printf("Input number of cycle : ");
+	// scanf("%d", &total_cycle);
+	// if (total_cycle < 0)
+	//{
+	//	printf("Input max cycle value >= 0\n");
+	//	return EXIT_FAILURE;
+	//}
 	printf("Input number of sorting cycle : ");
 	scanf("%d", &sorting_cycle);
 	if (sorting_cycle <= 0)
@@ -1794,20 +1794,20 @@ int main()
 		printf("Input sorting cycle value > 0\n");
 		return EXIT_FAILURE;
 	}
-	printf("Input number of solution : ");
-	scanf("%d", &pop_size);
-	if (pop_size <= 0)
-	{
-		printf("Input number of solution > 0\n");
-		return EXIT_FAILURE;
-	}
-	// printf("Input number of CDSs in a solution : ");
-	// scanf("%d", &cds_num);
-	// if (cds_num <= 1)
+	// printf("Input number of solution : ");
+	// scanf("%d", &pop_size);
+	// if (pop_size <= 0)
+	//{
+	//	printf("Input number of solution > 0\n");
+	//	return EXIT_FAILURE;
+	// }
+	//  printf("Input number of CDSs in a solution : ");
+	//  scanf("%d", &cds_num);
+	//  if (cds_num <= 1)
 	//{
 	//	printf("Input number of CDSs > 1\n");
 	//	return EXIT_FAILURE;
-	// }
+	//  }
 	printf("Input mutation probability (0 ~ 1 value) : ");
 	scanf("%f", &mprob);
 	if (mprob < 0 || mprob > 1)
@@ -1819,10 +1819,11 @@ int main()
 	scanf("%d", &limit);
 	printf("Input thread per block x value --> number of thread  warp size (32) * x : ");
 	scanf("%d", &x);
-    printf("Input number of global cycle : ");
-	scanf("%d", &global_cycle);
+	// printf("Input number of global cycle : ");
+	// scanf("%d", &global_cycle);
 	printf("For sorting kernel use number of twice_pop threads per block");
 
+	global_cycle = 10;
 	for (int zz = 0; zz < sizeof(ff_cds_num) / sizeof(int); zz++)
 	{
 		global_fp = fopen(ff_result[zz], "w");
@@ -1830,248 +1831,260 @@ int main()
 		memset(input_file, NULL, sizeof(input_file));
 		memcpy(input_file, ffile_name[zz], sizeof(input_file));
 		cds_num = ff_cds_num[zz];
-		for (int z = 0; z < global_cycle; z++)
+
+		total_cycle = 25;
+		for (int c1 = 0; c1 < 7; c1++)
 		{
-			total_time = 0;
-
-			/* read input file (fasta format) */
-			fp = fopen(input_file, "r");
-			if (fp == NULL)
+			pop_size = 128;
+			for (int s1 = 0; s1 < 5; s1++)
 			{
-				printf("Line : %d Opening input file is failed", __LINE__);
-				return EXIT_FAILURE;
-			}
-
-			numBlocks = pop_size;
-			threadsPerBlock = WARP_SIZE * x;
-			twice_pop = pop_size * 2;
-
-			fseek(fp, 0, SEEK_END);
-			len_amino_seq = ftell(fp);
-			fseek(fp, 0, SEEK_SET);
-			fgets(buf, 256, fp);
-			len_amino_seq -= ftell(fp);
-
-			amino_seq = (char *)malloc(sizeof(char) * len_amino_seq);
-
-			idx = 0;
-			while (!feof(fp))
-			{
-				tmp = fgetc(fp);
-				if (tmp != '\n')
-					amino_seq[idx++] = tmp;
-			}
-			amino_seq[idx] = NULL;
-			len_amino_seq = idx - 1;
-			len_cds = len_amino_seq * CODON_SIZE;
-			len_sol = len_cds * cds_num;
-
-			fclose(fp);
-			/* end file process */
-
-			h_amino_seq_idx = (char *)malloc(sizeof(char) * len_amino_seq);
-			for (i = 0; i < len_amino_seq; i++)
-			{
-				idx = FindAminoIndex(amino_seq[i]);
-				if (idx == NOT_FOUND)
+				fprintf(global_fp, "\ncycle : %d, pop_size : %d\n", total_cycle, pop_size);
+				for (int z = 0; z < global_cycle; z++)
 				{
-					printf("FindAminoIndex function is failed... \n");
-					return EXIT_FAILURE;
+					total_time = 0;
+
+					/* read input file (fasta format) */
+					fp = fopen(input_file, "r");
+					if (fp == NULL)
+					{
+						printf("Line : %d Opening input file is failed", __LINE__);
+						return EXIT_FAILURE;
+					}
+
+					numBlocks = pop_size;
+					threadsPerBlock = WARP_SIZE * x;
+					twice_pop = pop_size * 2;
+
+					fseek(fp, 0, SEEK_END);
+					len_amino_seq = ftell(fp);
+					fseek(fp, 0, SEEK_SET);
+					fgets(buf, 256, fp);
+					len_amino_seq -= ftell(fp);
+
+					amino_seq = (char *)malloc(sizeof(char) * len_amino_seq);
+
+					idx = 0;
+					while (!feof(fp))
+					{
+						tmp = fgetc(fp);
+						if (tmp != '\n')
+							amino_seq[idx++] = tmp;
+					}
+					amino_seq[idx] = NULL;
+					len_amino_seq = idx - 1;
+					len_cds = len_amino_seq * CODON_SIZE;
+					len_sol = len_cds * cds_num;
+
+					fclose(fp);
+					/* end file process */
+
+					h_amino_seq_idx = (char *)malloc(sizeof(char) * len_amino_seq);
+					for (i = 0; i < len_amino_seq; i++)
+					{
+						idx = FindAminoIndex(amino_seq[i]);
+						if (idx == NOT_FOUND)
+						{
+							printf("FindAminoIndex function is failed... \n");
+							return EXIT_FAILURE;
+						}
+						h_amino_seq_idx[i] = idx;
+					}
+
+					h_amino_startpos = (char *)malloc(sizeof(char) * 20);
+					h_amino_startpos[0] = 0;
+					for (i = 1; i < 20; i++)
+					{
+						h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
+					}
+
+					/* caculate the smallest mCAI value */
+					lowest_mcai = 1.f;
+					for (i = 0; i < len_amino_seq; i++)
+					{
+						lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
+					}
+
+					/* host memory allocation */
+					h_pop = (char *)malloc(sizeof(char) * twice_pop * len_sol);
+					h_objval = (float *)malloc(sizeof(float) * twice_pop * OBJECTIVE_NUM);
+
+					/* device memory allocation */
+					CHECK_CUDA(cudaEventCreate(&d_start))
+					CHECK_CUDA(cudaEventCreate(&d_end))
+					CHECK_CUDA(cudaMalloc((void **)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock))
+					CHECK_CUDA(cudaMalloc((void **)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
+					CHECK_CUDA(cudaMalloc((void **)&d_pop, sizeof(char) * twice_pop * len_sol))
+					CHECK_CUDA(cudaMalloc((void **)&d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
+					CHECK_CUDA(cudaMalloc((void **)&d_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
+					CHECK_CUDA(cudaMalloc((void **)&d_lrcsval, sizeof(int) * twice_pop * 3))
+					CHECK_CUDA(cudaMalloc((void **)&d_sorted_array, sizeof(int) * twice_pop))
+					CHECK_CUDA(cudaMalloc((void **)&d_F_set, sizeof(bool) * twice_pop * twice_pop))
+					CHECK_CUDA(cudaMalloc((void **)&d_Sp_set, sizeof(bool) * twice_pop * twice_pop))
+
+					CHECK_CUDA(cudaMalloc((void **)&tmp_pop, sizeof(char) * twice_pop * len_sol))
+					CHECK_CUDA(cudaMalloc((void **)&tmp_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
+					CHECK_CUDA(cudaMalloc((void **)&tmp_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
+					CHECK_CUDA(cudaMalloc((void **)&tmp_lrcsval, sizeof(int) * twice_pop * 3))
+
+					CHECK_CUDA(cudaMalloc((void **)&d_rank_count, sizeof(int) * twice_pop))
+					CHECK_CUDA(cudaMalloc((void **)&d_np, sizeof(int) * twice_pop))
+					CHECK_CUDA(cudaMalloc((void **)&d_sol_struct, sizeof(Sol) * twice_pop))
+
+					/* memory copy host to device */
+					CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
+					CHECK_CUDA(cudaMemcpyToSymbol(c_sort_popsize, &twice_pop, sizeof(int)))
+
+					/* ------------------------------------------------ kerenl call ----------------------------------------------- */
+					/* curand generator setting */
+					CHECK_CUDA(cudaEventRecord(d_start))
+					setup_kernel<<<numBlocks, threadsPerBlock>>>(genState, (unsigned long long)rand());
+					CHECK_CUDA(cudaEventRecord(d_end))
+					CHECK_CUDA(cudaEventSynchronize(d_end))
+					CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+					total_time += kernel_time / 1000.f;
+
+					/* initialize solution */
+					CHECK_CUDA(cudaEventRecord(d_start))
+					GenSolution<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, limit, lowest_mcai);
+					CHECK_CUDA(cudaEventRecord(d_end))
+					CHECK_CUDA(cudaEventSynchronize(d_end))
+					CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+					total_time += kernel_time / 1000.f;
+
+					int numCoopBlock = (twice_pop + deviceProp.maxThreadsPerBlock - 1) / deviceProp.maxThreadsPerBlock;
+					int numCoopThreads = (twice_pop % numCoopBlock == 0) ? (twice_pop / numCoopBlock) : (twice_pop / numCoopBlock) + 1;
+
+					void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_objval, &d_sol_struct, &d_rank_count, &d_np};
+					j = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
+					CHECK_CUDA(cudaEventRecord(d_start))
+					for (i = 0; i < j; i++)
+					{
+						CHECK_CUDA(cudaMemcpy(tmp_pop, d_pop, sizeof(char) * len_sol * twice_pop, cudaMemcpyDeviceToDevice))
+						CHECK_CUDA(cudaMemcpy(tmp_objval, d_objval, sizeof(float) * OBJECTIVE_NUM * twice_pop, cudaMemcpyDeviceToDevice))
+						CHECK_CUDA(cudaMemcpy(tmp_objidx, d_objidx, sizeof(char) * OBJECTIVE_NUM * 2 * twice_pop, cudaMemcpyDeviceToDevice))
+						CHECK_CUDA(cudaMemcpy(tmp_lrcsval, d_lrcsval, sizeof(int) * 3 * twice_pop, cudaMemcpyDeviceToDevice))
+						if (i == j - 1 && (total_cycle % sorting_cycle != 0))
+						{
+							mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
+						}
+						else
+						{
+							mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
+						}
+						CHECK_CUDA(cudaMemset(d_F_set, false, sizeof(bool) * twice_pop * twice_pop))
+						CHECK_CUDA(cudaMemset(d_Sp_set, false, sizeof(bool) * twice_pop * twice_pop))
+						CHECK_CUDA(cudaLaunchCooperativeKernel((void **)FastSortSolution, numCoopBlock, numCoopThreads, args))
+					}
+					CHECK_CUDA(cudaEventRecord(d_end))
+					CHECK_CUDA(cudaEventSynchronize(d_end))
+					CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
+					total_time += kernel_time / 1000.f;
+
+					/* memory copy device to host */
+					CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * twice_pop * len_sol, cudaMemcpyDeviceToHost))
+					CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM, cudaMemcpyDeviceToHost))
+
+					// for compute hypervolume & minimum distance out process
+					for (i = 0; i < twice_pop; i++)
+					{
+						h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
+					}
+					// print minimum distance to ideal point
+					min_dist = MinEuclid(h_objval, twice_pop);
+					printf("minimum distance to the ideal point : %f\n", min_dist);
+
+					/* print solution */
+					// for (i = 0; i < pop_size * 2; i++)
+					//{
+					//	printf("%d solution\n", i + 1);
+					//	for (j = 0; j < cds_num; j++) {
+					//		printf("%d cds : ", j + 1);
+					//		for (k = 0; k < len_cds; k++) {
+					//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
+					//		}
+					//		printf("\n");
+					//	}
+					//	printf("\n");
+					// }
+
+					/* print objective value */
+					// printf("\n\n");
+					// for (i = 0; i < pop_size * 2; i++)
+					//{
+					//	printf("%d solution\n", i + 1);
+					//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+					//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
+					//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
+					//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
+					//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
+					// }
+
+					std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
+					fp = fopen("test.txt", "w");
+					/* for computing hypervolume write file */
+					for (i = 0; i < twice_pop; i++)
+					{
+						fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+					}
+					fclose(fp);
+					std::chrono::duration<double> sec = std::chrono::system_clock::now() - start;
+					total_time += static_cast<float>(sec.count());
+					printf("\n\n total time : %f\n\n", total_time);
+
+					pipe = popen(command, "r");
+					if (!pipe)
+					{
+						printf("Failed to execute command\n");
+						return 1;
+					}
+
+					// Read the output of the command
+					while (fgets(buffer, sizeof(buffer), pipe))
+					{
+						printf("%s", buffer);
+					}
+
+					// Close the pipe
+					pclose(pipe);
+					fprintf(global_fp, "%f,%f,%f\n", total_time, min_dist, atof(buffer));
+
+					/* free deivce memory */
+					CHECK_CUDA(cudaEventDestroy(d_start))
+					CHECK_CUDA(cudaEventDestroy(d_end))
+					CHECK_CUDA(cudaFree(genState))
+					CHECK_CUDA(cudaFree(d_amino_seq_idx))
+					CHECK_CUDA(cudaFree(d_pop))
+					CHECK_CUDA(cudaFree(d_objval))
+					CHECK_CUDA(cudaFree(d_objidx))
+					CHECK_CUDA(cudaFree(d_lrcsval))
+					CHECK_CUDA(cudaFree(d_sorted_array))
+					CHECK_CUDA(cudaFree(d_F_set))
+					CHECK_CUDA(cudaFree(d_Sp_set))
+					CHECK_CUDA(cudaFree(tmp_pop))
+					CHECK_CUDA(cudaFree(tmp_objval))
+					CHECK_CUDA(cudaFree(tmp_objidx))
+					CHECK_CUDA(cudaFree(tmp_lrcsval))
+					CHECK_CUDA(cudaFree(d_np))
+					CHECK_CUDA(cudaFree(d_sol_struct))
+					CHECK_CUDA(cudaFree(d_rank_count))
+
+					/* free host memory */
+					free(amino_seq);
+					free(h_amino_seq_idx);
+					free(h_amino_startpos);
+					free(h_pop);
+					free(h_objval);
 				}
-				h_amino_seq_idx[i] = idx;
+				pop_size *= 2;
 			}
-
-			h_amino_startpos = (char *)malloc(sizeof(char) * 20);
-			h_amino_startpos[0] = 0;
-			for (i = 1; i < 20; i++)
-			{
-				h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
-			}
-
-			/* caculate the smallest mCAI value */
-			lowest_mcai = 1.f;
-			for (i = 0; i < len_amino_seq; i++)
-			{
-				lowest_mcai *= (float)pow(Codons_weight[h_amino_startpos[h_amino_seq_idx[i]]], 1.0 / len_amino_seq);
-			}
-
-			/* host memory allocation */
-			h_pop = (char *)malloc(sizeof(char) * twice_pop * len_sol);
-			h_objval = (float *)malloc(sizeof(float) * twice_pop * OBJECTIVE_NUM);
-
-			/* device memory allocation */
-			CHECK_CUDA(cudaEventCreate(&d_start))
-			CHECK_CUDA(cudaEventCreate(&d_end))
-			CHECK_CUDA(cudaMalloc((void **)&genState, sizeof(curandStateXORWOW) * numBlocks * threadsPerBlock))
-			CHECK_CUDA(cudaMalloc((void **)&d_amino_seq_idx, sizeof(char) * len_amino_seq))
-			CHECK_CUDA(cudaMalloc((void **)&d_pop, sizeof(char) * twice_pop * len_sol))
-			CHECK_CUDA(cudaMalloc((void **)&d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
-			CHECK_CUDA(cudaMalloc((void **)&d_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
-			CHECK_CUDA(cudaMalloc((void **)&d_lrcsval, sizeof(int) * twice_pop * 3))
-			CHECK_CUDA(cudaMalloc((void **)&d_sorted_array, sizeof(int) * twice_pop))
-			CHECK_CUDA(cudaMalloc((void **)&d_F_set, sizeof(bool) * twice_pop * twice_pop))
-			CHECK_CUDA(cudaMalloc((void **)&d_Sp_set, sizeof(bool) * twice_pop * twice_pop))
-
-			CHECK_CUDA(cudaMalloc((void **)&tmp_pop, sizeof(char) * twice_pop * len_sol))
-			CHECK_CUDA(cudaMalloc((void **)&tmp_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM))
-			CHECK_CUDA(cudaMalloc((void **)&tmp_objidx, sizeof(char) * twice_pop * OBJECTIVE_NUM * 2))
-			CHECK_CUDA(cudaMalloc((void **)&tmp_lrcsval, sizeof(int) * twice_pop * 3))
-
-			CHECK_CUDA(cudaMalloc((void **)&d_rank_count, sizeof(int) * twice_pop))
-			CHECK_CUDA(cudaMalloc((void **)&d_np, sizeof(int) * twice_pop))
-			CHECK_CUDA(cudaMalloc((void **)&d_sol_struct, sizeof(Sol) * twice_pop))
-
-			/* memory copy host to device */
-			CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_cds_num, &cds_num, sizeof(int)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_mprob, &mprob, sizeof(float)))
-			CHECK_CUDA(cudaMemcpyToSymbol(c_sort_popsize, &twice_pop, sizeof(int)))
-
-			/* ------------------------------------------------ kerenl call ----------------------------------------------- */
-			/* curand generator setting */
-			CHECK_CUDA(cudaEventRecord(d_start))
-			setup_kernel<<<numBlocks, threadsPerBlock>>>(genState, (unsigned long long)rand());
-			CHECK_CUDA(cudaEventRecord(d_end))
-			CHECK_CUDA(cudaEventSynchronize(d_end))
-			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-			total_time += kernel_time / 1000.f;
-
-			/* initialize solution */
-			CHECK_CUDA(cudaEventRecord(d_start))
-			GenSolution<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM) + sizeof(char) * (len_sol + len_amino_seq + 2 * OBJECTIVE_NUM)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, d_sorted_array, limit, lowest_mcai);
-			CHECK_CUDA(cudaEventRecord(d_end))
-			CHECK_CUDA(cudaEventSynchronize(d_end))
-			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-			total_time += kernel_time / 1000.f;
-
-			int numCoopBlock = (twice_pop + deviceProp.maxThreadsPerBlock - 1) / deviceProp.maxThreadsPerBlock;
-			int numCoopThreads = (twice_pop % numCoopBlock == 0) ? (twice_pop / numCoopBlock) : (twice_pop / numCoopBlock) + 1;
-
-			void *args[] = {&d_sorted_array, &d_F_set, &d_Sp_set, &d_objval, &d_sol_struct, &d_rank_count, &d_np};
-			j = (total_cycle % sorting_cycle == 0) ? total_cycle / sorting_cycle : total_cycle / sorting_cycle + 1;
-			CHECK_CUDA(cudaEventRecord(d_start))
-			for (i = 0; i < j; i++)
-			{
-				CHECK_CUDA(cudaMemcpy(tmp_pop, d_pop, sizeof(char) * len_sol * twice_pop, cudaMemcpyDeviceToDevice))
-				CHECK_CUDA(cudaMemcpy(tmp_objval, d_objval, sizeof(float) * OBJECTIVE_NUM * twice_pop, cudaMemcpyDeviceToDevice))
-				CHECK_CUDA(cudaMemcpy(tmp_objidx, d_objidx, sizeof(char) * OBJECTIVE_NUM * 2 * twice_pop, cudaMemcpyDeviceToDevice))
-				CHECK_CUDA(cudaMemcpy(tmp_lrcsval, d_lrcsval, sizeof(int) * 3 * twice_pop, cudaMemcpyDeviceToDevice))
-				if (i == j - 1 && (total_cycle % sorting_cycle != 0))
-				{
-					mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, total_cycle % sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
-				}
-				else
-				{
-					mainKernel<<<numBlocks, threadsPerBlock, sizeof(int) * (threadsPerBlock + 3 * 2) + sizeof(float) * (threadsPerBlock + OBJECTIVE_NUM * 2) + sizeof(char) * (len_sol * 2 + len_amino_seq + OBJECTIVE_NUM * 2 * 2 + 1)>>>(genState, d_amino_seq_idx, d_pop, d_objval, d_objidx, d_lrcsval, sorting_cycle, tmp_pop, tmp_objval, tmp_objidx, tmp_lrcsval, d_sorted_array);
-				}
-				CHECK_CUDA(cudaMemset(d_F_set, false, sizeof(bool) * twice_pop * twice_pop))
-				CHECK_CUDA(cudaMemset(d_Sp_set, false, sizeof(bool) * twice_pop * twice_pop))
-				CHECK_CUDA(cudaLaunchCooperativeKernel((void **)FastSortSolution, numCoopBlock, numCoopThreads, args))
-			}
-			CHECK_CUDA(cudaEventRecord(d_end))
-			CHECK_CUDA(cudaEventSynchronize(d_end))
-			CHECK_CUDA(cudaEventElapsedTime(&kernel_time, d_start, d_end))
-			total_time += kernel_time / 1000.f;
-
-			/* memory copy device to host */
-			CHECK_CUDA(cudaMemcpy(h_pop, d_pop, sizeof(char) * twice_pop * len_sol, cudaMemcpyDeviceToHost))
-			CHECK_CUDA(cudaMemcpy(h_objval, d_objval, sizeof(float) * twice_pop * OBJECTIVE_NUM, cudaMemcpyDeviceToHost))
-
-			// for compute hypervolume & minimum distance out process
-			for (i = 0; i < twice_pop; i++)
-			{
-				h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
-			}
-			// print minimum distance to ideal point
-			min_dist = MinEuclid(h_objval, twice_pop);
-			printf("minimum distance to the ideal point : %f\n", min_dist);
-
-			/* print solution */
-			// for (i = 0; i < pop_size * 2; i++)
-			//{
-			//	printf("%d solution\n", i + 1);
-			//	for (j = 0; j < cds_num; j++) {
-			//		printf("%d cds : ", j + 1);
-			//		for (k = 0; k < len_cds; k++) {
-			//			printf("%c", h_pop[len_sol * i + len_cds * j + k]);
-			//		}
-			//		printf("\n");
-			//	}
-			//	printf("\n");
-			// }
-
-			/* print objective value */
-			// printf("\n\n");
-			// for (i = 0; i < pop_size * 2; i++)
-			//{
-			//	printf("%d solution\n", i + 1);
-			//	printf("mCAI : %f mHD : %f MLRCS : %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-			//	printf("mCAI idx : %d mHD idx : %d %d MLRCS idx : %d %d\n", h_objidx[i * OBJECTIVE_NUM * 2 + _mCAI * 2],
-			//		h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _mHD * 2 + 1],
-			//		h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2], h_objidx[i * OBJECTIVE_NUM * 2 + _MLRCS * 2 + 1]);
-			//	printf("P : %d Q : %d L : %d\n", h_lrcsval[i * 3 + P], h_lrcsval[i * 3 + Q], h_lrcsval[i * 3 + L]);
-			// }
-
-			std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
-			fp = fopen("test.txt", "w");
-			/* for computing hypervolume write file */
-			for (i = 0; i < twice_pop; i++)
-			{
-				fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
-			}
-			fclose(fp);
-			std::chrono::duration<double> sec = std::chrono::system_clock::now() - start;
-			total_time += static_cast<float>(sec.count());
-			printf("\n\n total time : %f\n\n", total_time);
-
-			pipe = popen(command, "r");
-			if (!pipe)
-			{
-				printf("Failed to execute command\n");
-				return 1;
-			}
-
-			// Read the output of the command
-			while (fgets(buffer, sizeof(buffer), pipe))
-			{
-				printf("%s", buffer);
-			}
-
-			// Close the pipe
-			pclose(pipe);
-			fprintf(global_fp, "%f,%f,%f\n", total_time, min_dist, atof(buffer));
-
-			/* free deivce memory */
-			CHECK_CUDA(cudaEventDestroy(d_start))
-			CHECK_CUDA(cudaEventDestroy(d_end))
-			CHECK_CUDA(cudaFree(genState))
-			CHECK_CUDA(cudaFree(d_amino_seq_idx))
-			CHECK_CUDA(cudaFree(d_pop))
-			CHECK_CUDA(cudaFree(d_objval))
-			CHECK_CUDA(cudaFree(d_objidx))
-			CHECK_CUDA(cudaFree(d_lrcsval))
-			CHECK_CUDA(cudaFree(d_sorted_array))
-			CHECK_CUDA(cudaFree(d_F_set))
-			CHECK_CUDA(cudaFree(d_Sp_set))
-			CHECK_CUDA(cudaFree(tmp_pop))
-			CHECK_CUDA(cudaFree(tmp_objval))
-			CHECK_CUDA(cudaFree(tmp_objidx))
-			CHECK_CUDA(cudaFree(tmp_lrcsval))
-			CHECK_CUDA(cudaFree(d_np))
-			CHECK_CUDA(cudaFree(d_sol_struct))
-			CHECK_CUDA(cudaFree(d_rank_count))
-
-			/* free host memory */
-			free(amino_seq);
-			free(h_amino_seq_idx);
-			free(h_amino_startpos);
-			free(h_pop);
-			free(h_objval);
+			total_cycle *= 2;
 		}
 		fclose(global_fp);
 	}
