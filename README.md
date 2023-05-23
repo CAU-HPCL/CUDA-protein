@@ -8,7 +8,8 @@ Input parameter
 - It is the number of total Solutions
 3. G
 - It is the number of Cycles(Generations)
-4. Mutation Probability
+4. The number of CDSs per Solution
+5. Mutation Probability
 
 Output File
 --
@@ -24,4 +25,4 @@ NVIDIA nvcc Compile option
     - This is needed to change your GPU(sm_86,sm_70...)
 + However, your GPU is needed to support the CUDA_Copperative & curand
 
-+ If you want to change the number of threads used for Initialization kernel & Muatation kernel, x variable is changed.
++ If you want to change the number of threads used for Initialization kernel & Muatation kernel since your architecture, x variable is changed.
