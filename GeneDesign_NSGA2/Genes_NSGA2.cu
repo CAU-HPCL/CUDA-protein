@@ -52,8 +52,8 @@ using namespace cooperative_groups;
 #define EUCLID(val1, val2, val3) (float)sqrt(pow(IDEAL_MCAI - val1, 2) + pow(IDEAL_MHD - val2, 2) + pow(val3, 2))
 
 /* -------------------- 20 kinds of amino acids & weights which are stored in ascending order -------------------- */
-char Amino_abbreviation[20] = {'A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y'};
-char Codons[61 * CODON_SIZE + 1] = "GCGGCAGCCGCU\
+char Amino_abbreviation[21] = {'A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y', 'Z'};     // last is stop codon
+char Codons[64 * CODON_SIZE + 1] = "GCGGCAGCCGCU\
 UGCUGU\
 GACGAU\
 GAGGAA\
@@ -72,9 +72,10 @@ UCGAGCAGUUCAUCCUCU\
 ACGACAACCACU\
 GUAGUGGUCGUU\
 UGG\
-UAUUAC";
-char Codons_num[20] = {4, 2, 2, 2, 2, 4, 2, 3, 2, 6, 1, 2, 4, 2, 6, 6, 4, 4, 1, 2};
-float Codons_weight[61] = {1854 / 13563.0f, 5296 / 13563.0f, 7223 / 135063.0f, 1.0f,
+UAUUAC\
+UAGUGAUAA";
+char Codons_num[21] = {4, 2, 2, 2, 2, 4, 2, 3, 2, 6, 1, 2, 4, 2, 6, 6, 4, 4, 1, 2, 3};
+float Codons_weight[64] = {1854 / 13563.0f, 5296 / 13563.0f, 7223 / 135063.0f, 1.0f,
                            1234 / 3052.0f, 1.0f,
                            8960 / 12731.0f, 1.0f,
                            6172 / 19532.0f, 1.0f,
@@ -93,15 +94,17 @@ float Codons_weight[61] = {1854 / 13563.0f, 5296 / 13563.0f, 7223 / 135063.0f, 1
                            1938 / 9812.0f, 5037 / 9812.0f, 6660 / 9812.0f, 1.0f,
                            3249 / 11442.0f, 3700 / 11442.0f, 6911 / 11442.0f, 1.0f,
                            1.0f,
-                           5768 / 7114.0f, 1.0f};
+                           5768 / 7114.0f, 1.0f,
+                           198 / 549.0f, 223 / 549.0f, 1.0f};
 /* ------------------------------ end of definition ------------------------------ */
 
 /* Find index of Amino_abbreviation array matching with input amino abbreviation using binary search */
 __host__ int FindAminoIndex(char amino_abbreviation)
 {
     int low = 0;
-    int high = 20 - 1;
+    int high = 21 - 1;
     int mid;
+
 
     while (low <= high)
     {
@@ -136,13 +139,13 @@ __host__ float MinEuclid(const float *objval, int pop_size)
     return res;
 }
 
-__constant__ char c_amino_startpos[20];
-__constant__ char c_codons[61 * CODON_SIZE + 1];
-__constant__ char c_codons_num[20];
+__constant__ char c_amino_startpos[21];
+__constant__ char c_codons[64 * CODON_SIZE + 1];
+__constant__ char c_codons_num[21];
 __constant__ int c_len_amino_seq;
 __constant__ int c_cds_num;
 __constant__ int c_sort_popsize;
-__constant__ float c_codons_weight[61];
+__constant__ float c_codons_weight[64];
 __constant__ float c_mprob;
 
 __device__ int lock = 0; // for atomic operation
@@ -1679,7 +1682,7 @@ int main()
     fseek(fp, 0, SEEK_SET);
     fgets(buf, 256, fp);
     len_amino_seq -= ftell(fp);
-    amino_seq = (char *)malloc(sizeof(char) * len_amino_seq);
+    amino_seq = (char *)malloc(sizeof(char) * (len_amino_seq + 1));
 
     idx = 0;
     while (!feof(fp))
@@ -1688,20 +1691,21 @@ int main()
         if (tmp != '\n')
             amino_seq[idx++] = tmp;
     }
+    amino_seq[idx - 1] = 'Z';
     amino_seq[idx] = NULL;
-    len_amino_seq = idx - 1;
+    len_amino_seq = idx;
     len_cds = len_amino_seq * CODON_SIZE;
     len_sol = len_cds * cds_num;
+    
 
     h_amino_seq_idx = (char *)malloc(sizeof(char) * len_amino_seq);
     for (i = 0; i < len_amino_seq; i++)
     {
         h_amino_seq_idx[i] = FindAminoIndex(amino_seq[i]);
-        ;
     }
-    h_amino_startpos = (char *)malloc(sizeof(char) * 20);
+    h_amino_startpos = (char *)malloc(sizeof(char) * 21);
     h_amino_startpos[0] = 0;
-    for (i = 1; i < 20; i++)
+    for (i = 1; i < 21; i++)
     {
         h_amino_startpos[i] = h_amino_startpos[i - 1] + Codons_num[i - 1];
     }
@@ -1739,7 +1743,7 @@ int main()
     /* Memory copy Host to Device */
     CHECK_CUDA(cudaMemcpy(d_amino_seq_idx, h_amino_seq_idx, sizeof(char) * len_amino_seq, cudaMemcpyHostToDevice))
     CHECK_CUDA(cudaMemcpyToSymbol(c_codons_weight, Codons_weight, sizeof(Codons_weight)))
-    CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 20))
+    CHECK_CUDA(cudaMemcpyToSymbol(c_amino_startpos, h_amino_startpos, sizeof(char) * 21))
     CHECK_CUDA(cudaMemcpyToSymbol(c_codons, Codons, sizeof(Codons)))
     CHECK_CUDA(cudaMemcpyToSymbol(c_codons_num, Codons_num, sizeof(Codons_num)))
     CHECK_CUDA(cudaMemcpyToSymbol(c_len_amino_seq, &len_amino_seq, sizeof(int)))
