@@ -49,7 +49,7 @@ using namespace cooperative_groups;
 #define IDEAL_MCAI 1
 #define IDEAL_MHD 1
 #define IDEAL_MLRCS 0
-#define EUCLID(val1, val2, val3) (float)sqrt(pow(IDEAL_MCAI - val1, 2) + pow(IDEAL_MHD - val2, 2) + pow(val3, 2))
+#define EUCLID(val1, val2, val3) (float)sqrt(pow(val1, 2) + pow(val2, 2) + pow(val3, 2))
 
 /* -------------------- 20 kinds of amino acids & weights which are stored in ascending order -------------------- */
 char Amino_abbreviation[21] = {'A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y', 'Z'};     // last is stop codon
@@ -209,19 +209,42 @@ __device__ void mutation(curandStateXORWOW *state, const char *codon_info, char 
     return;
 }
 
-__device__ bool ParetoComparison(const float *new_objval, const float *old_objval)
+__device__ bool dominate(const float *new_obj_val, const float *old_obj_val)
 {
-    // Weak pareto dominance
-    if ((new_objval[_mCAI] == old_objval[_mCAI]) &&
-        (new_objval[_mHD] == old_objval[_mHD]) &&
-        (new_objval[_MLRCS] == old_objval[_MLRCS]))
+    bool check[OBJECTIVE_NUM] = {
+        false,
+    };
+    int i;
+    int cnt = 0;
+    for (i = 0; i < OBJECTIVE_NUM; i++)
+    {
+        if (fabs(new_obj_val[i] - old_obj_val[i]) > 0.000001f)
+        {
+            check[i] = true;
+        }
+        else
+        {
+            cnt += 1;
+        }
+    }
+
+    if (cnt == OBJECTIVE_NUM)
+    {
         return false;
-    else if ((new_objval[_mCAI] >= old_objval[_mCAI]) &&
-             (new_objval[_mHD] >= old_objval[_mHD]) &&
-             (new_objval[_MLRCS] <= old_objval[_MLRCS]))
-        return true;
-    else
-        return false;
+    }
+
+    for (i = 0; i < OBJECTIVE_NUM; i++)
+    {
+        if (check[i])
+        {
+            if (new_obj_val[i] > old_obj_val[i])
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 /* curand random number generator state setting */
@@ -377,12 +400,12 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
         {
             if (i == 0)
             {
-                s_sol_objval[_mCAI] = s_obj_compute[0];
+                s_sol_objval[_mCAI] = -s_obj_compute[0];
                 s_sol_objidx[_mCAI * 2] = i;
             }
-            else if (s_obj_compute[0] <= s_sol_objval[_mCAI])
+            else if (-s_obj_compute[0] >= s_sol_objval[_mCAI])
             {
-                s_sol_objval[_mCAI] = s_obj_compute[0];
+                s_sol_objval[_mCAI] = -s_obj_compute[0];
                 s_sol_objidx[_mCAI * 2] = i;
             }
         }
@@ -433,13 +456,13 @@ __global__ void GenSolution(curandStateXORWOW *state, const char *d_amino_seq_id
             {
                 if (i == 0 && j == 1)
                 {
-                    s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
+                    s_sol_objval[_mHD] = -s_obj_compute[0] / len_cds;
                     s_sol_objidx[_mHD * 2] = i;
                     s_sol_objidx[_mHD * 2 + 1] = j;
                 }
-                else if ((s_obj_compute[0] / len_cds) <= s_sol_objval[_mHD])
+                else if ((-s_obj_compute[0] / len_cds) >= s_sol_objval[_mHD])
                 {
-                    s_sol_objval[_mHD] = s_obj_compute[0] / len_cds;
+                    s_sol_objval[_mHD] = -s_obj_compute[0] / len_cds;
                     s_sol_objidx[_mHD * 2] = i;
                     s_sol_objidx[_mHD * 2 + 1] = j;
                 }
@@ -738,9 +761,9 @@ __global__ void FastSortSolution(int *d_sorted_array, bool *F_set, bool *Sp_set,
         {
             if (g.thread_rank() != i)
             {
-                if (ParetoComparison(&d_objval[g.thread_rank() * OBJECTIVE_NUM], &d_objval[i * OBJECTIVE_NUM]))
+                if (dominate(&d_objval[g.thread_rank() * OBJECTIVE_NUM], &d_objval[i * OBJECTIVE_NUM]))
                     Sp_set[g.thread_rank() * c_sort_popsize + i] = true;
-                else if (ParetoComparison(&d_objval[i * OBJECTIVE_NUM], &d_objval[g.thread_rank() * OBJECTIVE_NUM]))
+                else if (dominate(&d_objval[i * OBJECTIVE_NUM], &d_objval[g.thread_rank() * OBJECTIVE_NUM]))
                     d_np[g.thread_rank()] += 1;
             }
         }
@@ -1207,12 +1230,12 @@ __global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx
             {
                 if (i == 0)
                 {
-                    ptr_target_objval[_mCAI] = s_obj_compute[0];
+                    ptr_target_objval[_mCAI] = -s_obj_compute[0];
                     ptr_target_objidx[_mCAI * 2] = i;
                 }
-                else if (s_obj_compute[0] <= ptr_target_objval[_mCAI])
+                else if (-s_obj_compute[0] >= ptr_target_objval[_mCAI])
                 {
-                    ptr_target_objval[_mCAI] = s_obj_compute[0];
+                    ptr_target_objval[_mCAI] = -s_obj_compute[0];
                     ptr_target_objidx[_mCAI * 2] = i;
                 }
             }
@@ -1263,13 +1286,13 @@ __global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx
                 {
                     if (i == 0 && j == 1)
                     {
-                        ptr_target_objval[_mHD] = s_obj_compute[0] / len_cds;
+                        ptr_target_objval[_mHD] = -s_obj_compute[0] / len_cds;
                         ptr_target_objidx[_mHD * 2] = i;
                         ptr_target_objidx[_mHD * 2 + 1] = j;
                     }
-                    else if (s_obj_compute[0] / len_cds <= ptr_target_objval[_mHD])
+                    else if (-s_obj_compute[0] / len_cds >= ptr_target_objval[_mHD])
                     {
-                        ptr_target_objval[_mHD] = s_obj_compute[0] / len_cds;
+                        ptr_target_objval[_mHD] = -s_obj_compute[0] / len_cds;
                         ptr_target_objidx[_mHD * 2] = i;
                         ptr_target_objidx[_mHD * 2 + 1] = j;
                     }
@@ -1450,7 +1473,7 @@ __global__ void mainKernel(curandStateXORWOW *state, const char *d_amino_seq_idx
         }
         __syncthreads();
 
-        if (ParetoComparison(ptr_target_objval, ptr_origin_objval))
+        if (dominate(ptr_target_objval, ptr_origin_objval))
         {
             if (sol_num == FIRST_SOL)
                 sol_num = SECOND_SOL;
@@ -1814,7 +1837,7 @@ int main()
             }
             fprintf(result_fp, "\n");
         }
-        fprintf(result_fp, "\n %d Solution mCAI : %f, mHD : %f, MLRCS : %f\n\n",i + 1, h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+        fprintf(result_fp, "\n %d Solution mCAI : %f, mHD : %f, MLRCS : %f\n\n",i + 1, -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
     }
     fclose(result_fp);
     /* End of Writing Results in File*/
@@ -1823,7 +1846,15 @@ int main()
     // For Compute Hypervolume & Minimum Distance
     for (i = 0; i < twice_pop; i++)
     {
-        h_objval[i * OBJECTIVE_NUM + _mHD] /= 0.4;
+        h_objval[i * OBJECTIVE_NUM + _mCAI] = (-h_objval[i * OBJECTIVE_NUM + _mCAI] -1.f)/(0-1.f);
+        h_objval[i * OBJECTIVE_NUM + _mHD] = (-h_objval[i * OBJECTIVE_NUM + _mHD] -0.4f)/(0-0.4f);
+        for(j = 0; j <OBJECTIVE_NUM;j++)
+        {
+            if(h_objval[i*OBJECTIVE_NUM +j] >=1)
+            {
+                h_objval[i*OBJECTIVE_NUM +j] = 0.999999f;
+            }
+        }
     }
     // print minimum distance to ideal point
     min_dist = MinEuclid(h_objval, twice_pop);
@@ -1833,7 +1864,7 @@ int main()
     /* For computing Quality of Solutions, Writing nomalized values in File */
     for (i = 0; i < twice_pop; i++)
     {
-        fprintf(fp, "%f %f %f\n", -h_objval[i * OBJECTIVE_NUM + _mCAI], -h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
+        fprintf(fp, "%f %f %f\n", h_objval[i * OBJECTIVE_NUM + _mCAI], h_objval[i * OBJECTIVE_NUM + _mHD], h_objval[i * OBJECTIVE_NUM + _MLRCS]);
     }
     fclose(fp);
     std::chrono::duration<double> sec = std::chrono::system_clock::now() - start;
@@ -1842,7 +1873,7 @@ int main()
 
 
 
-    char command[100] = "./hv -r \"0 0 1\" Normalized_value_quality_computation.txt";
+    char command[100] = "./hv -r \"1 1 1\" Normalized_value_quality_computation.txt";
     pipe = popen(command, "r");
     if (!pipe)
     {
